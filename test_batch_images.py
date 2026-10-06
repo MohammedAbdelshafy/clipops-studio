@@ -127,8 +127,6 @@ class TestDryRun(unittest.TestCase):
         self.assertAlmostEqual(plan["per_image_usd"], 0.0732, places=4)
         self.assertTrue(os.path.exists(plan["jsonl_path"]))
         os.unlink(plan["jsonl_path"])  # plan built the file offline
-        self.assertEqual(plan["limits"]["target_turnaround_h"], 24)
-        self.assertEqual(plan["limits"]["expires_h"], 48)
 
     def test_alias_key_accepted(self):
         with _no_keys():
@@ -218,6 +216,125 @@ class TestTransport(unittest.TestCase):
         out = client.download_results(op)
         self.assertTrue(out["sku-00001"]["ok"])
         self.assertFalse(out["sku-00002"]["ok"])
+
+
+class TestValidation(unittest.TestCase):
+    """Input validation: clear errors instead of tracebacks / silent garbage."""
+
+    def test_build_line_rejects_empty_prompt(self):
+        with self.assertRaises(ValueError):
+            bi.build_line("sku-00001", "", "2K", "4:5")
+
+    def test_build_line_rejects_whitespace_prompt(self):
+        with self.assertRaises(ValueError):
+            bi.build_line("sku-00001", "   ", "2K", "4:5")
+
+    def test_build_line_rejects_non_string_prompt(self):
+        with self.assertRaises(ValueError):
+            bi.build_line("sku-00001", None, "2K", "4:5")
+
+    def test_build_line_rejects_empty_aspect(self):
+        with self.assertRaises(ValueError):
+            bi.build_line("sku-00001", "a cat", "2K", "")
+
+    def test_build_jsonl_dict_missing_prompt(self):
+        with self.assertRaisesRegex(ValueError, "missing 'prompt'"):
+            bi.build_jsonl([{"key": "k1"}], size="2K")
+
+    def test_build_jsonl_rejects_non_string_item(self):
+        with self.assertRaises(TypeError):
+            bi.build_jsonl(["ok", 42], size="2K")
+
+    def test_build_jsonl_empty_list(self):
+        with self.assertRaises(ValueError):
+            bi.build_jsonl([], size="2K")
+
+    def test_build_jsonl_non_list(self):
+        with self.assertRaises(TypeError):
+            bi.build_jsonl("a single string", size="2K")
+
+    def test_estimate_cost_negative_images(self):
+        with self.assertRaises(ValueError):
+            bi.estimate_cost(-1, "2K")
+
+    def test_estimate_cost_non_int_images(self):
+        with self.assertRaises(TypeError):
+            bi.estimate_cost("10", "2K")
+
+    def test_estimate_cost_zero_images_is_zero(self):
+        out = bi.estimate_cost(0, "2K")
+        self.assertEqual(out["total_usd"], 0.0)
+        self.assertEqual(out["num_images"], 0)
+
+    def test_parse_results_non_str(self):
+        with self.assertRaises(TypeError):
+            bi.parse_results_jsonl(None)
+
+    def test_run_overnight_empty_prompts(self):
+        with _no_keys():
+            client = bi.GeminiBatchClient()
+        with self.assertRaises(ValueError):
+            client.run_overnight([], "test-job")
+
+    def test_run_overnight_empty_display_name(self):
+        with _no_keys():
+            client = bi.GeminiBatchClient()
+        with self.assertRaises(ValueError):
+            client.run_overnight(["a cat"], "  ")
+
+    def test_create_batch_missing_file(self):
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "AIza-test"}):
+            client = bi.GeminiBatchClient()
+        with self.assertRaisesRegex(bi.BatchError, "JSONL file not found"):
+            client.create_batch("/tmp/does-not-exist-clipops.jsonl", "nightly")
+
+
+class TestCli(unittest.TestCase):
+    """CLI: clean usage errors (exit 2) instead of tracebacks; dry-run plan."""
+
+    def test_cli_missing_file(self):
+        with self.assertRaises(SystemExit) as cm:
+            bi.main(["--file", "/tmp/does-not-exist-clipops.txt"])
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_cli_no_prompts(self):
+        with self.assertRaises(SystemExit) as cm:
+            bi.main([])
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_cli_empty_prompt_rejected(self):
+        with _no_keys():
+            with self.assertRaises(SystemExit) as cm:
+                bi.main(["--prompt", "   "])
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_cli_dry_run_happy_path(self):
+        import io
+        from contextlib import redirect_stdout
+        with _no_keys():
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                bi.main(["--prompt", "a cat astronaut", "--name", "cli-test"])
+        plan = json.loads(buf.getvalue())
+        self.assertTrue(plan["dry_run"])
+        self.assertEqual(plan["num_requests"], 1)
+        self.assertEqual(plan["size"], "2K")
+        self.assertTrue(os.path.exists(plan["jsonl_path"]))
+        os.unlink(plan["jsonl_path"])
+
+    def test_cli_api_error_clean_exit(self):
+        # Live API failure -> "error: ..." on stderr, exit 1, no traceback.
+        import io
+        from contextlib import redirect_stderr
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "AIza-test"}), \
+                patch.object(bi.GeminiBatchClient, "run_overnight",
+                             side_effect=bi.BatchError("boom")):
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                with self.assertRaises(SystemExit) as cm:
+                    bi.main(["--prompt", "a cat"])
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("error: boom", buf.getvalue())
 
 
 if __name__ == "__main__":

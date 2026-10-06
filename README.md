@@ -1,17 +1,30 @@
 # ClipOps Studio v0.1
 
-**Agent-native video-as-code pipeline.** You don't edit timelines — an agent
-writes a 7-stage plan (analysis → brand → script → motion → build →
-choreography → review), each stage leaving a readable, editable, overrulable
-markdown artifact. The video itself is a data structure (`props.json`) rendered
-by a Remotion template. Pattern ported from remocn-studio, proven in the
-2026-10-04 spike.
+> **Repo-state note (2026-10-06):** this checkout ships only the overnight
+> image batch lane — `batch_images.py` (+ `test_batch_images.py`, 34 hermetic
+> tests). The Remotion video-pipeline sections below (`template/`,
+> `generate-video.mjs`, `workflow/`, `out/`) describe a **planned component
+> that is not committed to this repo yet** — it is a roadmap, not shipped
+> code. Past-tense "verified" claims under those sections refer to the
+> 2026-10-04 spike environment, not to files in this checkout.
 
-**Status: PAID PILOT.** Template + generator + agent workflow are real and
-verified through render bundling. Final mp4 frame-capture needs a working
-browser (see below) — not available on this VM.
+**Agent-native video-as-code pipeline (planned).** You don't edit timelines
+— an agent writes a 7-stage plan (analysis → brand → script → motion →
+build → choreography → review), each stage leaving a readable, editable,
+overrulable markdown artifact. The video itself is a data structure
+(`props.json`) rendered by a Remotion template. Pattern ported from
+remocn-studio, proven in the 2026-10-04 spike.
 
-## Layout
+**Status:** the video pipeline below is **planned** (spike-verified
+2026-10-04 in a separate environment — the Remotion project is not in this
+repo). What ships here today is the overnight image batch lane
+(`batch_images.py`), dry-run capable with no key.
+
+## Planned pipeline: layout (not in this repo yet)
+
+> The tree below is the planned Remotion video pipeline — none of these
+> paths exist in this checkout. Kept for reference until the pipeline is
+> committed or this section is trimmed.
 
 ```
 clipops-studio/
@@ -36,6 +49,9 @@ clipops-studio/
 
 ## Quick start
 
+> The Remotion block below is planned (see note at top). The batch lane
+> block after it is what ships in this repo.
+
 ```bash
 cd ~/workspace/clipops-studio/template && bun install   # once
 cd ~/workspace/clipops-studio
@@ -59,12 +75,12 @@ No `scenes` given → the generator auto-builds: title → bullets → price →
 Pass explicit `scenes[]` for full control (kinds: `title|bullets|price|logo|cta`,
 each `{kind, lines[1-5], durationInFrames[15-300]}`).
 
-## Full pipeline (paid work)
+## Full pipeline (planned — not in this repo yet)
 
 Follow `workflow/WORKFLOW.md`: run the 7 stage prompts as sequential subagents
 into `out/<slug>/`. Only a Stage-7 **APPROVE** goes to render.
 
-## Render host requirement
+## Render host requirement (planned pipeline)
 
 Frame capture needs a real, working Chrome/Chromium. Set:
 
@@ -80,7 +96,7 @@ all produce no output), so `remotion render` fails at frame capture with
 with working Chrome (Playwright's bundled Chromium, chrome-for-testing, or
 plain Google Chrome). Expected render for a 3–7s 720p promo: <60s end-to-end.
 
-## What was verified on 2026-10-04 (this VM)
+## What was verified on 2026-10-04 (spike environment — not this repo)
 
 - `bun install`: 242 packages, clean.
 - `node generate-video.mjs` with a P4 brief: `props.json` written and valid,
@@ -92,7 +108,7 @@ plain Google Chrome). Expected render for a 3–7s 720p promo: <60s end-to-end.
 - All 7 stage prompts reviewed as complete, self-contained subagent
   instructions with inputs, outputs, and acceptance criteria.
 
-## The $299 offer (PAID PILOT scope)
+## The $299 offer (planned pipeline scope — not yet shippable from this repo)
 
 - Up to **10 short-form promo videos** (720p, 3–7s each) via the 7-stage pipeline.
 - You review the stage artifacts (script, brand, motion) **before** render —
@@ -103,7 +119,7 @@ plain Google Chrome). Expected render for a 3–7s 720p promo: <60s end-to-end.
 - What it is not: no live-action filming, no licensed music/stock, no
   platform upload management. Renders happen on a working host (ours).
 
-## Design decisions
+## Design decisions (planned pipeline)
 
 - **Video as data, not timeline.** `props.json` is the video. Swap values, get
   a different video, never touch code.
@@ -147,7 +163,7 @@ python3 batch_images.py --prompt "product photo of a red sneaker" \
   --prompt "hero banner, neon gym" --name "fanforge-overnight"
 # dry-run without a key: prints the JSONL path + cost plan, touches nothing
 GEMINI_API_KEY=... python3 batch_images.py --file prompts.txt --name "run-1"
-python3 -m unittest test_batch_images -v   # 14 hermetic tests
+python3 -m unittest test_batch_images -v   # 34 hermetic tests
 ```
 
 Lifecycle API: `GeminiBatchClient().run_overnight(prompts, name)` →

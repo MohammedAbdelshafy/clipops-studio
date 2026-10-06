@@ -88,8 +88,13 @@ def estimate_cost(num_images: int,
     """USD estimate for a Batch image run at the verified rate card.
 
     Raises ValueError for 4K: its Batch image price was not verified, so no
-    number is invented for it.
+    number is invented for it. Raises ValueError for negative num_images.
     """
+    if not isinstance(num_images, int):
+        raise TypeError(
+            f"num_images must be an int, got {type(num_images).__name__}")
+    if num_images < 0:
+        raise ValueError(f"num_images must be >= 0, got {num_images}")
     if size not in IMAGE_USD:
         raise ValueError(
             f"Batch image pricing for size {size!r} is not verified "
@@ -123,6 +128,12 @@ def build_line(key: str, prompt: str, size: str = "2K",
     """One JSONL request line in the verified schema."""
     if size not in VALID_SIZES:
         raise ValueError(f"imageSize must be one of {VALID_SIZES}, got {size!r}")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("prompt must be a non-empty string "
+                         f"(got {prompt!r})")
+    if not isinstance(aspect_ratio, str) or not aspect_ratio.strip():
+        raise ValueError("aspect_ratio must be a non-empty string "
+                         f"(e.g. '4:5', got {aspect_ratio!r})")
     return {
         "key": key,
         "request": {
@@ -144,15 +155,28 @@ def build_jsonl(prompts: list,
     prompts: list of strings, or list of {"prompt": ..., "key": ...} dicts.
     Keys default to sku-00001, sku-00002, ...
     """
+    if not isinstance(prompts, list):
+        raise TypeError(
+            f"prompts must be a list, got {type(prompts).__name__}")
+    if not prompts:
+        raise ValueError("prompts is empty — nothing to submit")
     if out_path is None:
         fd, out_path = tempfile.mkstemp(prefix="clipops-batch-", suffix=".jsonl")
         os.close(fd)
     with open(out_path, "w", encoding="utf-8") as fh:
         for i, p in enumerate(prompts, 1):
             if isinstance(p, dict):
+                if "prompt" not in p:
+                    raise ValueError(
+                        f"prompts[{i - 1}] dict is missing 'prompt' "
+                        f"(got keys: {sorted(p)})")
                 key, prompt = p.get("key") or f"sku-{i:05d}", p["prompt"]
-            else:
+            elif isinstance(p, str):
                 key, prompt = f"sku-{i:05d}", p
+            else:
+                raise TypeError(
+                    f"prompts[{i - 1}] must be a str or dict, "
+                    f"got {type(p).__name__}")
             fh.write(json.dumps(build_line(key, prompt, size, aspect_ratio),
                                 ensure_ascii=False) + "\n")
     return out_path
@@ -165,6 +189,9 @@ def parse_results_jsonl(text: str) -> dict:
     "_failed_lines" instead of raising, so one corrupt line never kills
     the whole overnight run's accounting.
     """
+    if not isinstance(text, str):
+        raise TypeError(
+            f"parse_results_jsonl expects str, got {type(text).__name__}")
     results: dict = {}
     failed = []
     for lineno, line in enumerate(text.splitlines(), 1):
@@ -352,6 +379,8 @@ class GeminiBatchClient:
     # -- create -----------------------------------------------------------
     def create_batch(self, jsonl_path: str, display_name: str) -> dict:
         """Upload JSONL and enqueue the batch. Returns the Operation."""
+        if not os.path.isfile(jsonl_path):
+            raise BatchError(f"JSONL file not found: {jsonl_path}")
         with open(jsonl_path, encoding="utf-8") as fh:
             num_requests = sum(1 for line in fh if line.strip())
         cost = estimate_cost(num_requests)
@@ -454,6 +483,10 @@ class GeminiBatchClient:
     def run_overnight(self, prompts: list, display_name: str,
                       size: str = "2K", aspect_ratio: str = "4:5") -> dict:
         """Build JSONL + cost plan; enqueue when a key is present."""
+        if not isinstance(display_name, str) or not display_name.strip():
+            raise ValueError(
+                "display_name must be a non-empty string "
+                f"(got {display_name!r})")
         jsonl_path = build_jsonl(prompts, size=size, aspect_ratio=aspect_ratio)
         cost = estimate_cost(len(prompts), size=size)
         plan = {
@@ -476,7 +509,7 @@ class GeminiBatchClient:
         return plan
 
 
-if __name__ == "__main__":
+def main(argv: list | None = None) -> None:
     import argparse
     ap = argparse.ArgumentParser(
         description="Gemini Batch overnight images — build JSONL + cost plan, "
@@ -487,13 +520,27 @@ if __name__ == "__main__":
     ap.add_argument("--size", default="2K", choices=VALID_SIZES)
     ap.add_argument("--aspect", default="4:5")
     ap.add_argument("--name", default="clipops-overnight")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     prompts = list(args.prompt)
     if args.file:
+        if not os.path.isfile(args.file):
+            ap.error(f"--file not found: {args.file}")
         with open(args.file, encoding="utf-8") as fh:
             prompts += [l.rstrip("\n") for l in fh if l.strip()]
     if not prompts:
         ap.error("give at least one --prompt or --file")
     client = GeminiBatchClient()
-    print(json.dumps(client.run_overnight(prompts, args.name, size=args.size,
-                                         aspect_ratio=args.aspect), indent=2))
+    try:
+        result = client.run_overnight(prompts, args.name, size=args.size,
+                                      aspect_ratio=args.aspect)
+    except (ValueError, TypeError) as e:
+        ap.error(str(e))
+    except BatchError as e:
+        # Live API failure: clean message + exit 1, not a traceback.
+        print(f"error: {e}", file=sys.stderr)
+        raise SystemExit(1)
+    print(json.dumps(result, indent=2))
+
+
+if __name__ == "__main__":
+    main()
