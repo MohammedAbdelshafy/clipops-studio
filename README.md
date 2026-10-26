@@ -1,4 +1,4 @@
-# Clip Delivery Tools
+# ClipOps Studio
 
 > **Repo-state note (2026-10-06):** this checkout ships only the overnight
 > image batch lane — `batch_images.py` (+ `test_batch_images.py`, 34 hermetic
