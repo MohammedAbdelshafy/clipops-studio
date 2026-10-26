@@ -2,11 +2,11 @@
 type: repository
 status: active
 owner_repo: MohammedAbdelshafy/clipops-studio
-product_name: Clip Delivery Tools
+product_name: ClipOps Studio
 source_of_truth: https://github.com/MohammedAbdelshafy/clipops-studio
 ---
 
-# Clip Delivery Tools CONTEXT
+# ClipOps Studio CONTEXT
 
 One job: prepare batches of image assets using the code that exists in this repository. The full Remotion video pipeline described in the README is planned reference material, not shipped functionality.
 
