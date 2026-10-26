@@ -1,4 +1,4 @@
-# ClipOps Studio v0.1
+# Clip Delivery Tools
 
 > **Repo-state note (2026-10-06):** this checkout ships only the overnight
 > image batch lane — `batch_images.py` (+ `test_batch_images.py`, 34 hermetic
@@ -8,12 +8,7 @@
 > code. Past-tense "verified" claims under those sections refer to the
 > 2026-10-04 spike environment, not to files in this checkout.
 
-**Agent-native video-as-code pipeline (planned).** You don't edit timelines
-— an agent writes a 7-stage plan (analysis → brand → script → motion →
-build → choreography → review), each stage leaving a readable, editable,
-overrulable markdown artifact. The video itself is a data structure
-(`props.json`) rendered by a Remotion template. Pattern ported from
-remocn-studio, proven in the 2026-10-04 spike.
+**Current scope:** this repository ships an overnight image-batch utility. The planned video workflow described below is documentation for a future addition, not a shipped feature.
 
 **Status:** the video pipeline below is **planned** (spike-verified
 2026-10-04 in a separate environment — the Remotion project is not in this
@@ -108,7 +103,7 @@ plain Google Chrome). Expected render for a 3–7s 720p promo: <60s end-to-end.
 - All 7 stage prompts reviewed as complete, self-contained subagent
   instructions with inputs, outputs, and acceptance criteria.
 
-## The $299 offer (planned pipeline scope — not yet shippable from this repo)
+## Possible service offer (not currently deliverable from this repo)
 
 - Up to **10 short-form promo videos** (720p, 3–7s each) via the 7-stage pipeline.
 - You review the stage artifacts (script, brand, motion) **before** render —
