@@ -1,3 +1,5 @@
+> **Review branch 2026-11-12:** This branch adds local, smoke-tested FFmpeg video operations and opt-in Postiz scheduling. It does not replace existing image batching; authenticated publishing and client acceptance remain unverified. See [VIDEO_WORKFLOW.md](VIDEO_WORKFLOW.md). The original contract below is retained as historical baseline.
+
 ---
 type: repository
 status: active

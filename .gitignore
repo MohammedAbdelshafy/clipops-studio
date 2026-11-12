@@ -1,0 +1,16 @@
+# Local media, speech models, credentials and review queues
+__pycache__/
+.pytest_cache/
+*.pyc
+*.mp4
+*.mov
+*.wav
+*.mp3
+*.srt
+*.vtt
+*.sqlite3
+*.sqlite3-*
+.env
+.env.*
+out/
+media/
