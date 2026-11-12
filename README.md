@@ -1,3 +1,5 @@
+> **Video MVP review branch (2026-11-12):** A new local FFmpeg workflow is implemented in `clipops.py`. See [VIDEO_WORKFLOW.md](VIDEO_WORKFLOW.md) for actual commands, tests and release gates. The historical scope/Remotion sections below describe the original main-branch image lane and planned renderer; they are retained for provenance.
+
 # ClipOps Studio
 
 > **Repo-state note (2026-10-06):** this checkout ships only the overnight
