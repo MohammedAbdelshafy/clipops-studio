@@ -2,7 +2,8 @@ name: ClipOps offline release gate
 
 on:
   pull_request:
-    branches: [main]
+    # Include the existing stacked PR base so the gate can run before merging.
+    branches: [main, feat/clipops-video-mvp-20261112]
     paths:
       - 'clipops.py'
       - 'batch_images.py'
