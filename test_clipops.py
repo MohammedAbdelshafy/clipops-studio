@@ -50,8 +50,12 @@ class QueueTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.db = str(Path(self.tmp.name) / "queue.db")
         self.media = Path(self.tmp.name) / "clip.mp4"
-        self.media.write_bytes(b"test fixture")
-        self.patcher = patch.object(clipops, "media_info", return_value={"format": {"duration": "15"}, "streams": [{"codec_type": "video"}]})
+        # Synthetic file + mocked ffprobe fields satisfy the technical media gate.
+        self.media.write_bytes(b"test fixture" * 1024)
+        self.patcher = patch.object(clipops, "media_info", return_value={
+            "file": str(self.media), "format": {"duration": "15"},
+            "streams": [{"codec_type": "video", "codec_name": "h264", "width": 720, "height": 1280}],
+        })
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
 
@@ -115,6 +119,27 @@ class QueueTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "POSTIZ_API_KEY"):
                 clipops.dispatch(self.db, j["id"], True)
         self.assertEqual(clipops.list_jobs(self.db)[0]["status"], "approved")
+
+    def test_live_publish_rejects_bad_media_before_network_or_claim(self):
+        j = self.job()
+        clipops.approve_job(self.db, j["id"], True)
+        with patch.dict(os.environ, {"CLIPOPS_ALLOW_PUBLISH": "1", "POSTIZ_API_KEY": "test-key"}), \
+                patch.object(clipops, "qc_media", return_value={"passed": False, "checks": {"h264_video": False}}), \
+                patch.object(clipops, "postiz_publish") as outbound:
+            with self.assertRaisesRegex(ValueError, "Clip failed pre-publish QC: h264_video"):
+                clipops.dispatch(self.db, j["id"], True)
+            outbound.assert_not_called()
+        self.assertEqual(clipops.list_jobs(self.db)[0]["status"], "approved")
+
+    def test_live_publish_positive_qc_still_honors_uncertain_send(self):
+        j = self.job()
+        clipops.approve_job(self.db, j["id"], True)
+        with patch.dict(os.environ, {"CLIPOPS_ALLOW_PUBLISH": "1", "POSTIZ_API_KEY": "test-key"}), \
+                patch.object(clipops, "qc_media", return_value={"passed": True, "checks": {"h264_video": True}}), \
+                patch.object(clipops, "postiz_publish", side_effect=TimeoutError("uncertain response")):
+            with self.assertRaises(TimeoutError):
+                clipops.dispatch(self.db, j["id"], True)
+        self.assertEqual(clipops.list_jobs(self.db)[0]["status"], "needs_manual_review")
 
     def test_claim_on_postiz_timeout_no_retries(self):
         j = self.job()
