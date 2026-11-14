@@ -357,6 +357,12 @@ def dispatch(db: str, job_id: str, live: bool = False) -> dict:
     api_key = os.environ.get("POSTIZ_API_KEY")
     if not api_key:
         raise RuntimeError("POSTIZ_API_KEY not configured")
+    # Fail closed before claiming a job or making a network request. This
+    # technical gate complements (does NOT replace) human captions/rights QA.
+    quality = qc_media(job["file"])
+    if not quality["passed"]:
+        failed = [name for name, passed in quality["checks"].items() if not passed]
+        raise ValueError("Clip failed pre-publish QC: " + ", ".join(failed))
     # Claim before network call to prevent duplicate scheduling if a timeout occurs.
     with connect(db) as con:
         c = con.execute("UPDATE jobs SET status='submitting' WHERE id=? AND status='approved'", (job_id,))
