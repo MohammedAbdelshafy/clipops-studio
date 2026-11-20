@@ -55,6 +55,26 @@ class PilotTests(unittest.TestCase):
         self.assertEqual(self.root.stat().st_mode & 0o777, 0o700)
         self.assertNotIn("model_path", pilot.get_project(self.root, project))
 
+    def test_webm_preview_is_cached_private_and_does_not_approve_delivery(self):
+        job = self.create()
+        with patch.object(pilot.pilot_edit, "render", self.render):
+            pilot.process_project(self.root, job, render_count=1)
+
+        def fake_encode(args, **kwargs):
+            Path(args[-1]).write_bytes(b"local-private-webm-test")
+            return None
+
+        with patch.object(pilot.subprocess, "run", side_effect=fake_encode) as run:
+            path = pilot.browser_preview(self.root, job, "c01")
+            self.assertEqual(path.read_bytes(), b"local-private-webm-test")
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.name, "preview.webm")
+            self.assertEqual(pilot.browser_preview(self.root, job, "c01"), path)
+            self.assertEqual(run.call_count, 1)
+        with self.assertRaisesRegex(ValueError, "named reviewer"):
+            pilot.get_media_path(self.root, job, "c01", "export")
+        self.assertEqual(pilot.get_project(self.root, job)["candidates"][0]["review"], "pending")
+
     def test_approved_file_integrity_and_edit_invalidation(self):
         job = self.create()
         with patch.object(pilot.pilot_edit, "render", self.render):
