@@ -266,7 +266,8 @@ class DeskHandler(BaseHTTPRequestHandler):
             extra.append(('Content-Range', f'bytes {start}-{end}/{size}'))
         if kind in ('export', 'srt', 'vtt', 'bundle'):
             extra.append(('Content-Disposition', f'attachment; filename="{clip_id}{path.suffix.lower()}"'))
-        self._headers(status, MEDIA_TYPES.get(path.suffix.lower(), 'application/octet-stream'), max(0, end - start + 1), extra)
+        media_type = 'application/zip' if kind == 'bundle' else MEDIA_TYPES.get(path.suffix.lower(), 'application/octet-stream')
+        self._headers(status, media_type, max(0, end - start + 1), extra)
         if self.command == 'HEAD':
             return
         with path.open('rb') as media:
