@@ -1,22 +1,11 @@
-# ClipOps Pocket — native Android offline beta
+# ClipOps Studio — Android hybrid beta
 
-This is a real installable Android application, **not** a Termux script or a WebView shortcut.
+Full desktop Studio access on Android, using the existing private Python/FFmpeg API and browser interface on a paired laptop or cloud host. This build does NOT independently run all desktop AI models or FFmpeg capabilities on the phone.
 
-- Native Android Media3 player and on-device Transformer. Android 10+. Compiled against Android API 36.
-- Pick a video using Android's document picker, preview, mark in/out, select original/vertical/square framing, render a <=180-second clip, save to Movies/ClipOps, share using Android's share sheet.
-- Entire trim pipeline is **offline**. No INTERNET permission, no accounts, no telemetry, no paid providers, no upload.
-- Cropping modes use fit/padding to preserve content rather than pretending to do automatic speaker tracking.
-- Source video remains unchanged; final clip appears in device gallery only after a complete successful export.
+Android launcher supports secure private Tailscale Serve HTTPS pairing, two selectable independent endpoints, Android document picker for video/JSON input, and system Save As for approved MP4/SRT/VTT/ZIP downloads. The old standalone native Pocket quick-trim is preserved as an offline screen.
 
-**Deliberate scope:** This APK does NOT yet port the desktop Python/FFmpeg ranker, AI transcription, multi-speaker effects, 15–20 GiB processing guarantees, brand templates, or full batch factory. Those remain in the desktop/local-first ClipOps Studio, separately available in GitHub. The Hatchable ClipOps Content Studio is a separate hosted *transcript-drafting* companion, not the native renderer.
+An independently configured Tailscale Serve processor and one-time server code are required for the full Studio. No cloud provider is deployed, public tunnel started, private footage uploaded or paid API called by building this APK. Never use Tailscale Funnel for the server.
 
-Build on GitHub Actions `ClipOps Pocket Android APK` (Java 17 / Gradle 8.13 / AGP 8.11.1 / Media3 1.11.1). Artifacts are unsigned-for-release but debug-signed for internal installation. This APK has not been accepted on a real physical device until you test it. A Google Play release needs a secure production keystore, store policy review, and user approval.
+Read docs/ANDROID_HYBRID_FULL_STUDIO.md for exact user-controlled setup, security boundaries and device acceptance.
 
-## Install (Android)
-
-1. Download `ClipOps-Pocket-APK` from a successful Actions run, extract its ZIP to obtain `app-debug.apk`.
-2. Tap the APK on your own device; enable *Install unknown apps* only for the download source when Android asks. Don't sideload from unknown links.
-3. Open **ClipOps Pocket** icon; select a small, rights-cleared MP4; set a short interval; tap **Export MP4**.
-4. Confirm the clip exists in **Gallery > Movies > ClipOps**, preview it and use **Share clip**.
-
-No Termux, Cloud Shell, or paid API is needed for these native features.
+GitHub CI produces debug-signed ClipOps-Studio-Hybrid-APK (app-debug.apk). New application ID com.mbm.clipops.studio prevents clobbering an earlier Pocket installation. Physical device QA remains necessary. Debug keystores are temporary: uninstall may be required when updating between separate CI runs. Do not distribute as a production app.

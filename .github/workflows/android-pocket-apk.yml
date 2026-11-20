@@ -1,4 +1,4 @@
-name: ClipOps Pocket Android APK
+name: ClipOps Studio Hybrid Android APK
 
 on:
   pull_request:
@@ -43,10 +43,14 @@ jobs:
           gradle-version: '8.13'
       - name: Test clip boundaries and build standalone debug APK
         run: gradle -p android :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
-      - name: Check private offline app manifest and archive integrity
+      - name: Check private HTTPS app manifest and archive integrity
         run: |
           set -euo pipefail
-          ! grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml
+          grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:usesCleartextTraffic="false"' android/app/src/main/AndroidManifest.xml
+          test -f android/app/src/main/java/com/mbm/clipops/pocket/StudioActivity.kt
+          test -f android/app/src/main/java/com/mbm/clipops/pocket/StudioEndpoint.kt
+          ! grep -q 'android.permission.CAMERA' android/app/src/main/AndroidManifest.xml
           ! grep -q 'android.permission.READ_EXTERNAL_STORAGE' android/app/src/main/AndroidManifest.xml
           test -s android/app/build/outputs/apk/debug/app-debug.apk
           unzip -t android/app/build/outputs/apk/debug/app-debug.apk | tail -n 1
@@ -54,7 +58,7 @@ jobs:
       - name: Upload APK for direct Android installation
         uses: actions/upload-artifact@v4
         with:
-          name: ClipOps-Pocket-APK
+          name: ClipOps-Studio-Hybrid-APK
           path: |
             android/app/build/outputs/apk/debug/app-debug.apk
             android/app/build/outputs/apk/debug/SHA256SUMS.txt
