@@ -48,7 +48,7 @@ class CreativeReviewTests(unittest.TestCase):
         self.assertEqual(result['proposed_updates']['end'],15)
         self.assertEqual(result['proposed_updates']['remove_ranges'],[[6,7]])
         self.assertEqual(self.clip['start'],0)
-        for instruction in ('publish now','remove 0 to 99','start 999','start -3','title: ','start 3;start 4'):
+        for instruction in ('publish now','remove 0 to 99','start 999','start -3','title: ','start 3;start 4', 'title: '+('X'*241)):
             with self.subTest(instruction=instruction), self.assertRaises(ValueError):
                 creative.propose_edit(self.clip,instruction,20)
 
