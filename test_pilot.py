@@ -2,7 +2,7 @@
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
-from threading import Event
+from threading import Event, Thread
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -152,6 +152,38 @@ class PilotTests(unittest.TestCase):
         self.assertTrue(all(c["rendered"] for c in state["candidates"]))
         pilot.purge_project(self.root, job)
         self.assertEqual(pilot.list_projects(self.root), [])
+
+    def test_concurrent_reader_does_not_break_atomic_state_save(self):
+        """A reader must not make the atomic state replace fail on Windows.
+
+        Windows denies the rename while a handle to the target is open without
+        delete sharing, so Studio's render worker and its HTTP reader collide.
+        """
+        target = self.work / "project.json"
+        pilot.save_json(target, {"status": "processing", "n": 0})
+        stop = Event()
+        failures = []
+
+        def reader():
+            while not stop.is_set():
+                try:
+                    pilot.load_json(target)
+                except Exception as exc:  # pragma: no cover - diagnostic
+                    failures.append(f"{type(exc).__name__}: {exc}")
+                    return
+
+        workers = [Thread(target=reader, daemon=True) for _ in range(4)]
+        for worker in workers:
+            worker.start()
+        try:
+            for n in range(40):
+                pilot.save_json(target, {"status": "processing", "n": n})
+        finally:
+            stop.set()
+            for worker in workers:
+                worker.join(timeout=5)
+        self.assertEqual(failures, [])
+        self.assertEqual(pilot.load_json(target)["n"], 39)
 
 
 if __name__ == "__main__":

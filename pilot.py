@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from clipops_compat import LEASE_FLAGS, NOFOLLOW, NONBLOCK, is_private_path, resource, sync_directory as _sync_directory, exclusive as _exclusive_lock
+from clipops_compat import LEASE_FLAGS, NOFOLLOW, NONBLOCK, is_private_path, replace_file, resource, serialised, shared_read, sync_directory as _sync_directory, exclusive as _exclusive_lock
 import hashlib
 import json
 import math
@@ -97,20 +97,21 @@ def lock(directory, filename, *, wait=False):
 
 
 def save_json(path, data):
-    with tempfile.NamedTemporaryFile("w", encoding="utf8", dir=path.parent, delete=False) as file:
-        tmp = Path(file.name)
+    with serialised(path):
+        with tempfile.NamedTemporaryFile("w", encoding="utf8", dir=path.parent, delete=False) as file:
+            tmp = Path(file.name)
+            try:
+                json.dump(data, file, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+                file.flush()
+                os.fsync(file.fileno())
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
         try:
-            json.dump(data, file, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
-            file.flush()
-            os.fsync(file.fileno())
-        except BaseException:
+            replace_file(tmp, path)
+            sync_directory(path.parent)
+        finally:
             tmp.unlink(missing_ok=True)
-            raise
-    try:
-        os.replace(tmp, path)
-        sync_directory(path.parent)
-    finally:
-        tmp.unlink(missing_ok=True)
 
 
 def sync_directory(path):
@@ -118,10 +119,17 @@ def sync_directory(path):
 
 
 def load_json(path, maximum=None):
-    if not path.is_file() or path.is_symlink() or (maximum and path.stat().st_size > maximum):
-        raise ValueError("Missing or oversized local JSON file")
-    with path.open(encoding="utf-8-sig") as stream:
-        return json.load(stream)
+    with serialised(path):
+        # Stat the open handle, not the path: Windows replacement may briefly make
+        # a path lookup fail while existing readers can still hold an older version.
+        try:
+            with shared_read(path) as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or (maximum and info.st_size > maximum) or path.is_symlink():
+                    raise ValueError("Missing or oversized local JSON file")
+                return json.load(stream)
+        except FileNotFoundError as exc:
+            raise ValueError("Missing or oversized local JSON file") from exc
 
 
 def save_state(directory, state):

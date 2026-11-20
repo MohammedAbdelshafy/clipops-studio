@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import contextlib
 import os
+import threading
+import time
 from pathlib import Path
 
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
@@ -174,6 +176,81 @@ def sync_directory(path):
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def replace_file(source, target, *, attempts=100, delay=0.005):
+    """Install `source` over `target`, retrying through a concurrent reader.
+
+    Windows refuses MoveFileEx(REPLACE_EXISTING) while any handle to the target
+    is open -- even one that grants FILE_SHARE_DELETE -- so a reader can make
+    os.replace fail with WinError 5. Callers that share one file serialise their
+    readers and writers with `serialised`; this retry covers readers that do
+    not, and re-raises if the handle is genuinely long lived. POSIX keeps the
+    single plain syscall.
+    """
+    if os.name != "nt":
+        os.replace(source, target)
+        return
+    for remaining in range(attempts, 0, -1):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if remaining == 1:
+                raise
+            time.sleep(delay)
+
+
+_FILE_LOCKS = {}
+_FILE_LOCKS_GUARD = threading.Lock()
+
+
+@contextlib.contextmanager
+def serialised(path, *, timeout=30.0):
+    """Exclude concurrent readers and writers of one file within this process.
+
+    ClipOps writes project state atomically (temp file plus rename) from its
+    render worker while HTTP handlers read the same file. Windows cannot replace
+    a file that any handle still has open, so retrying alone cannot make that
+    safe; both sides take this per-path lock instead. Process-local is enough
+    because the worker and the readers live in one process, and POSIX keeps the
+    same call shape without needing the lock.
+    """
+    key = str(path)
+    with _FILE_LOCKS_GUARD:
+        lock = _FILE_LOCKS.setdefault(key, threading.Lock())
+    if not lock.acquire(timeout=timeout):
+        raise TimeoutError(f"timed out waiting to access {key}")
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+@contextlib.contextmanager
+def shared_read(path, *, attempts=100 if os.name == "nt" else 1, delay=0.005):
+    """Yield an open reader for `path`, tolerating a transient sharing denial.
+
+    An atomic replace leaves a brief window in which a concurrent open of the
+    target is denied with EACCES, so a reader of project or transcript JSON can
+    fail even though the writer is about to succeed. Readers retry briefly
+    because the writer converges; POSIX keeps a single plain open. A genuinely
+    missing file is not retried -- it propagates at once, because retrying it
+    would cost the caller the full retry budget on every absent-file lookup.
+    """
+    for remaining in range(attempts, 0, -1):
+        try:
+            stream = open(path, encoding="utf-8-sig")
+        except PermissionError:
+            if remaining == 1:
+                raise
+            time.sleep(delay)
+            continue
+        try:
+            yield stream
+        finally:
+            stream.close()
+        return
 
 
 def is_private_path(path, *, directory=False):
