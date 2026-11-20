@@ -2,6 +2,8 @@
 
 **Current scope: supervised local video editing and clipping pilot.** The repository implements private MP4/MOV/MKV/WebM import, optional offline transcription or reviewed timed JSON, clip discovery, edits, FFmpeg rendering, captions, technical QC, and approval-gated MP4/SRT/VTT export. It also retains the independent image-batching lane. It does **not** provide production multi-user accounts, public video hosting, or verified hands-off social publishing.
 
+**Android phone:** [Run in account-restricted Google Cloud Shell](docs/ANDROID_CLOUD_SHELL.md) using `bash START_CLIPOPS_CLOUD_SHELL.sh` after opening the repository in Cloud Shell. This is a session-based private preview, not persistent hosting.
+
 Run `./launch-studio` after installing the free local dependencies. [First test](docs/TRY_CLIPOPS.md) · [Pilot guide](PILOT.md) · [Offline-first fallbacks](docs/FREE_FALLBACKS.md) · [Evidence and limits](docs/RC_HARDENING_RESULTS.md).
 
 > **Historical roadmap:** The Remotion generator documented below was scoped in October 2026 but is **not** in this repository. It is separate from the implemented FFmpeg pilot. Historical test claims refer to their recorded environments, not the current browser test.
