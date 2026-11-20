@@ -7,8 +7,8 @@ const platforms = {shorts:'YouTube Shorts · 9:16', reels:'Instagram Reels · 9:
 const reviews = {pending:'Pending review', approved:'Approved', rejected:'Rejected'};
 const statuses = {queued:'Queued', processing:'Processing', review:'In review', failed:'Needs attention'};
 const names = {projects:'Project library', desk:'Review desk', exports:'Export center'};
-const tabNames = {details:'Clip details', captions:'Transcript & captions', settings:'Render settings', review:'Review & delivery'};
-const state = {csrf:'', model:false, projects:[], project:null, clipId:null, view:'projects', tab:'details', filter:'all', query:'', page:0, busy:false, version:0};
+const tabNames = {details:'Clip details', captions:'Transcript & captions', creative:'Creative review', settings:'Render settings', review:'Review & delivery'};
+const state = {csrf:'', model:false, projects:[], project:null, clipId:null, view:'projects', tab:'details', filter:'all', query:'', page:0, busy:false, version:0, creative:null, proposal:null};
 let noticeTimer;
 
 function clock(seconds) {
@@ -71,7 +71,7 @@ function setNav() {
 }
 function setClip(project, newId) {
   if (state.project?.id !== project.id) {
-    state.tab = 'details'; state.query = ''; state.page = 0; state.filter = 'all';
+    state.tab = 'details'; state.query = ''; state.page = 0; state.filter = 'all'; state.creative = null; state.proposal = null;
   }
   state.project = project;
   const preferred = newId || state.clipId;
@@ -168,6 +168,34 @@ function transcriptList() {
 function captions() {
   return `<div class="transcript-tools"><h3>Source transcript</h3><input id="search" class="search" type="search" placeholder="Search transcript" aria-label="Search transcript" value="${escapeText(state.query)}"></div><div id="transcript-list">${transcriptList()}</div>`;
 }
+function creativeReview() {
+  const c = current(), p = state.project;
+  if (!c) return empty('No clip selected', 'Select a candidate to review its source material.');
+  const pack = state.creative?.candidate_id === c.id ? state.creative : null;
+  const proposal = state.proposal?.candidate_id === c.id ? state.proposal : null;
+  const hook = pack?.hook_source;
+  const quotes = (pack?.quote_bank || []).map(q => '<li><strong>'+clock(q.start)+'–'+clock(q.end)+'</strong> · <span dir="auto">'+escapeText(q.verbatim)+'</span>'+(q.speaker ? ' <small>('+escapeText(q.speaker)+')</small>' : '')+'</li>').join('');
+  const warnings = (pack?.warnings || []).map(w => '<li>'+escapeText(w)+'</li>').join('');
+  return '<div class="review-block"><h3>Source-grounded creative review</h3>'
+    + '<p class="hint">Offline, editable suggestions only. No cloud AI, automatic edits or publishing.</p>'
+    + button('creative-refresh', pack ? 'Refresh source analysis' : 'Analyze this clip', 'dark', p.busy)
+    + (pack ? '<section class="panel"><h3>Suggested opening hook</h3><p dir="auto">'
+      + (hook ? escapeText(hook.verbatim) : 'No complete source quote found; choose a hook manually.')+'</p>'
+      + (hook ? '<small class="hint">Source: '+clock(hook.start)+'–'+clock(hook.end)+'. Editorial suggestion only.</small>' : '')
+      + '<h3>Verbatim quote bank</h3>'+(quotes ? '<ul class="rationale">'+quotes+'</ul>' : '<p class="hint">No suitable quotes found.</p>')
+      + '<h3>Manual editorial checks</h3>'+(warnings ? '<ul class="rationale">'+warnings+'</ul>' : '<p class="hint">Still review story, facts, audio and caption quality.</p>')
+      + (pack.possible_profanity.length ? '<p class="hint">Review words: '+escapeText(pack.possible_profanity.join(', '))+'</p>' : '')
+      + '</section>' : '')
+    + '<form id="creative-form"><label class="field wide">Preview an edit instruction'
+    + '<textarea rows="3" name="instruction" maxlength="1000" required placeholder="start 00:05; end 00:38; title: A useful lesson"></textarea>'
+    + '<small class="hint">Supported: start, end, title:, cta:, remove X to Y. Separate commands with semicolons. Structured editing, not generative AI.</small></label>'
+    + '<div class="form-footer"><button class="button dark" type="submit" '+(p.busy ? 'disabled' : '')+'>Preview safe edit</button></div></form>'
+    + (proposal ? '<section class="panel"><h3>Edit preview — not applied</h3><pre class="hint">'+escapeText(JSON.stringify(proposal.proposed_updates,null,2))+'</pre>'
+      + '<p class="hint">Edits require rerendering and review before delivery.</p>'
+      + button('apply-proposal','Apply reviewed edits','primary',p.busy)+'</section>' : '')
+    + '</div>';
+}
+
 function settings() {
   const p = state.project, brand = p.brand || {};
   const fonts = Object.fromEntries(['DejaVu Sans','DejaVu Serif','Liberation Sans','Noto Sans Arabic'].map(f => [f,f]));
@@ -185,7 +213,7 @@ function drawTab() {
   const area = $('#tab-body');
   if (!area) return;
   for (const tab of document.querySelectorAll('[data-tab]')) tab.setAttribute('aria-pressed', String(tab.dataset.tab === state.tab));
-  area.innerHTML = ({details,captions,settings,review})[state.tab]();
+  area.innerHTML = ({details,captions,creative:creativeReview,settings,review})[state.tab]();
 }
 function draw() {
   setNav();
@@ -475,6 +503,10 @@ async function onSubmit(form, submitter) {
   switch (form.id) {
     case 'import-form': return upload(form);
     case 'details-form': return editRequest({candidate_id:current().id,title:data.title,start:Number(data.start),end:Number(data.end),description:data.description,cta:data.cta},'Clip edits saved.');
+    case 'creative-form': {
+      state.proposal = await api(projectUrl('propose'),{candidate_id:current().id,instruction:data.instruction});
+      drawTab(); notice('Edit preview ready. Nothing has been applied.'); return;
+    }
     case 'settings-form': {
       const brand = {};
       for (const key of ['font','accent','text','background']) if (data[key]) brand[key] = data[key];
@@ -528,7 +560,7 @@ document.addEventListener('submit',async event => {
 document.addEventListener('click', async event => {
   const node = event.target.closest('button'); if (!node || node.disabled) return;
   try {
-    if (node.dataset.clip) { state.clipId = node.dataset.clip; state.sourceView = false; draw(); return; }
+    if (node.dataset.clip) { state.clipId = node.dataset.clip; state.sourceView = false; state.creative = null; state.proposal = null; draw(); return; }
     if (node.dataset.tab) { state.tab = node.dataset.tab; drawTab(); return; }
     if (node.dataset.cutAppend !== undefined) {
       const field = $('#cuts-form textarea'), range = node.dataset.start + ', ' + node.dataset.end;
@@ -558,6 +590,17 @@ document.addEventListener('click', async event => {
       case 'batch': batchDialog(); break;
       case 'cut-dialog': await cutDialog(); break;
       case 'punch-dialog': punchDialog(); break;
+      case 'creative-refresh': {
+        const c = current(); if (!c || state.project.busy) break;
+        state.creative = await api(projectUrl(c.id + '/creative'));
+        drawTab(); break;
+      }
+      case 'apply-proposal': {
+        const p = state.proposal, c = current();
+        if (!p || !c || p.candidate_id !== c.id || state.project.busy) throw new Error('Preview the current candidate before applying edits.');
+        await editRequest({candidate_id:c.id, ...p.proposed_updates},'Reviewed edits saved. Rerender before approval.');
+        state.proposal = null; state.creative = null; drawTab(); break;
+      }
       case 'compare': {
         const seconds = mapPlayhead(current(),$('#video').currentTime,!state.sourceView);
         state.sourceView = !state.sourceView;
