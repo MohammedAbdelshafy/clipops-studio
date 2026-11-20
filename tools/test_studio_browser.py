@@ -218,6 +218,21 @@ def main():
             page.get_by_role('link',name='Review desk').click()
             page.set_viewport_size({'width':390,'height':844})
             expect(page.get_by_role('heading',name='The editing room',exact=True)).to_be_visible()
+            expect(page.locator('.ambient-preview')).to_have_count(0)
+            expect(page.get_by_role('button', name='Toggle cinematic video backdrop')).to_be_disabled()
+            mobile_media = page.locator('#video').get_attribute('src')
+            print("Mobile foreground source:", mobile_media, flush=True)
+            if '/webm' in mobile_media:
+                retry = ctx.request.get(url + f'/media/{job}/{clip}/webm',
+                                        headers={'Range': 'bytes=0-63'})
+                print("Mobile WebM HTTP:", {'status': retry.status,
+                                           'type': retry.headers.get('content-type'),
+                                           'range': retry.headers.get('content-range'),
+                                           'prefix': retry.body()[:4].hex()}, flush=True)
+                webm_path = pilot.browser_preview(Path(tmp), job, clip)
+                print("WebM probe:", subprocess.check_output(['ffprobe','-v','error',
+                    '-show_entries','format=format_name,duration,size:stream=codec_type,codec_name',
+                    '-of','json',str(webm_path)],text=True).strip(),flush=True)
             seek_preview(page, 2.2)
             page.evaluate('window.scrollTo(0, 0)')
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
