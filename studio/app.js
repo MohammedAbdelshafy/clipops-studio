@@ -12,7 +12,7 @@ const ambientPreference = (() => {
   try { return localStorage.getItem('clipops-ambient-video') !== 'off'; }
   catch { return true; }
 })();
-const state = {csrf:'', model:false, projects:[], project:null, clipId:null, view:'projects', tab:'details', filter:'all', query:'', page:0, busy:false, version:0, ambient:ambientPreference, creative:null, proposal:null};
+const state = {csrf:'', model:false, projects:[], project:null, clipId:null, view:'projects', tab:'details', filter:'all', query:'', page:0, busy:false, version:0, ambient:ambientPreference, creative:null, proposal:null, moments:null, momentQuery:'', visual:null};
 let noticeTimer;
 
 function clock(seconds) {
@@ -92,7 +92,7 @@ function setNav() {
 }
 function setClip(project, newId) {
   if (state.project?.id !== project.id) {
-    state.tab = 'details'; state.query = ''; state.page = 0; state.filter = 'all'; state.creative = null; state.proposal = null;
+    state.tab = 'details'; state.query = ''; state.page = 0; state.filter = 'all'; state.creative = null; state.proposal = null; state.moments = null; state.momentQuery = ''; state.visual = null;
   }
   state.project = project;
   const preferred = newId || state.clipId;
@@ -205,9 +205,27 @@ function creativeReview() {
   const hook = pack?.hook_source;
   const quotes = (pack?.quote_bank || []).map(q => '<li><strong>'+clock(q.start)+'–'+clock(q.end)+'</strong> · <span dir="auto">'+escapeText(q.verbatim)+'</span>'+(q.speaker ? ' <small>('+escapeText(q.speaker)+')</small>' : '')+'</li>').join('');
   const warnings = (pack?.warnings || []).map(w => '<li>'+escapeText(w)+'</li>').join('');
+  const momentMatches = (state.moments?.matches || []).map((m,i) =>
+    '<li><strong>'+clock(m.start)+'–'+clock(m.end)+'</strong> · <span dir="auto">'+escapeText(m.verbatim)+'</span>'
+    + '<p class="hint">Matched: '+escapeText(m.matched_terms.join(', '))+' · source token match '+escapeText(m.match_score)+'/100 (not viral score)'+'</p>'
+    + '<div class="actions">'+button('moment-seek','Play source').replace('data-action="moment-seek"','data-action="moment-seek" data-moment="'+i+'"')
+    +button('moment-preview','Preview clip boundaries','dark',p.busy).replace('data-action="moment-preview"','data-action="moment-preview" data-moment="'+i+'"')+'</div></li>').join('');
+  const visual = state.visual?.candidate_id === c.id ? state.visual : null;
+  const sceneList = (visual?.scene_boundaries || []).map(t => '<li>'+clock(t)+' · <span class="hint">Frame-change suggestion only</span></li>').join('');
   return '<div class="review-block"><h3>Source-grounded creative review</h3>'
     + '<p class="hint">Offline, editable suggestions only. No cloud AI, automatic edits or publishing.</p>'
     + button('creative-refresh', pack ? 'Refresh source analysis' : 'Analyze this clip', 'dark', p.busy)
+    + '<form id="moment-form" class="review-block"><label class="field wide">Find moments by subject or exact quote'
+    + '<input name="query" maxlength="220" minlength="2" required placeholder="e.g. biggest customer mistake / غلطة العميل" dir="auto" value="'+escapeText(state.momentQuery)+'">'
+    + '<small class="hint">Offline word/phrase matching of real transcript only; no visual/sentiment AI or invented dialogue.</small></label>'
+    + '<button class="button dark" type="submit" '+(p.busy ? 'disabled' : '')+'>Find source moments</button></form>'
+    + (state.moments ? '<section class="panel"><h3>Found source moments</h3>'
+      + (momentMatches ? '<ul class="rationale">'+momentMatches+'</ul>' : '<p class="hint">No matching contiguous moments; try a different source word.</p>')
+      + '</section>' : '')
+    + button('visual-refresh','Analyze visual scene changes','dark',p.busy)
+    + (visual ? '<section class="panel"><h3>Visual transitions in selected clip</h3>'
+      + (sceneList ? '<ul class="rationale">'+sceneList+'</ul>' : '<p class="hint">No strong frame changes detected at sampled rate.</p>')
+      + '<p class="hint">'+escapeText(visual.warning)+'</p></section>' : '')
     + (pack ? '<section class="panel"><h3>Suggested opening hook</h3><p dir="auto">'
       + (hook ? escapeText(hook.verbatim) : 'No complete source quote found; choose a hook manually.')+'</p>'
       + (hook ? '<small class="hint">Source: '+clock(hook.start)+'–'+clock(hook.end)+'. Editorial suggestion only.</small>' : '')
@@ -574,6 +592,11 @@ async function onSubmit(form, submitter) {
   switch (form.id) {
     case 'import-form': return upload(form);
     case 'details-form': return editRequest({candidate_id:current().id,title:data.title,start:Number(data.start),end:Number(data.end),description:data.description,cta:data.cta},'Clip edits saved.');
+    case 'moment-form': {
+      state.momentQuery = String(data.query || '');
+      state.moments = await api(projectUrl('search-moments'), {query:state.momentQuery});
+      drawTab(); notice('Matched the local transcript. Review source before changing cuts.'); return;
+    }
     case 'creative-form': {
       state.proposal = await api(projectUrl('propose'),{candidate_id:current().id,instruction:data.instruction});
       drawTab(); notice('Edit preview ready. Nothing has been applied.'); return;
@@ -631,7 +654,7 @@ document.addEventListener('submit',async event => {
 document.addEventListener('click', async event => {
   const node = event.target.closest('button'); if (!node || node.disabled) return;
   try {
-    if (node.dataset.clip) { state.clipId = node.dataset.clip; state.sourceView = false; state.creative = null; state.proposal = null; draw(); return; }
+    if (node.dataset.clip) { state.clipId = node.dataset.clip; state.sourceView = false; state.creative = null; state.proposal = null; state.visual = null; state.moments = null; draw(); return; }
     if (node.dataset.tab) { state.tab = node.dataset.tab; drawTab(); return; }
     if (node.dataset.cutAppend !== undefined) {
       const field = $('#cuts-form textarea'), range = node.dataset.start + ', ' + node.dataset.end;
@@ -670,6 +693,25 @@ document.addEventListener('click', async event => {
       case 'batch': batchDialog(); break;
       case 'cut-dialog': await cutDialog(); break;
       case 'punch-dialog': punchDialog(); break;
+      case 'moment-seek': {
+        const m = state.moments?.matches?.[Number(node.dataset.moment)];
+        if (!m) throw new Error('Source moment is no longer available. Search again.');
+        state.sourceView = true;
+        draw(); bindVideo(m.start); syncAmbient();
+        $('#video').play().catch(notifyError); break;
+      }
+      case 'moment-preview': {
+        const m = state.moments?.matches?.[Number(node.dataset.moment)], c = current();
+        if (!m || !c || state.project.busy) throw new Error('Select a moment and a candidate to review.');
+        state.proposal = await api(projectUrl('propose'),{candidate_id:c.id,
+          instruction:'start '+m.start.toFixed(3)+'; end '+m.end.toFixed(3)});
+        drawTab(); notice('Candidate boundary preview ready. Nothing applied.'); break;
+      }
+      case 'visual-refresh': {
+        const c = current(); if (!c || state.project.busy) break;
+        state.visual = await api(projectUrl(c.id + '/visual'));
+        drawTab(); notice('Local visual analysis complete. No cuts were made.'); break;
+      }
       case 'creative-refresh': {
         const c = current(); if (!c || state.project.busy) break;
         state.creative = await api(projectUrl(c.id + '/creative'));

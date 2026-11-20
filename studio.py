@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 from studio_uploads import UploadStore, UploadError, TUS, EMPTY_RECEIPT, expires, checksum
 from free_fallbacks import free_routes
 import clipops_creative_review as creative_review
+import clipops_scene_review
 import studio_delivery
 from studio_preview import cloud_shell_origin
 
@@ -79,6 +80,7 @@ class DeskServer(ThreadingHTTPServer):
         self.upload_store = UploadStore(self.root)
         self.uploads = threading.BoundedSemaphore(1)
         self.slots = threading.BoundedSemaphore(6)
+        self.visual_slots = threading.BoundedSemaphore(1)
         self.lock = threading.RLock()
         self.active = set()
         self.worker_errors = {}
@@ -245,6 +247,19 @@ class DeskHandler(BaseHTTPRequestHandler):
             self._json(self.server.details(match[1]))
         elif match := re.fullmatch(rf'/api/projects/({ID})/({CLIP})/cuts', path):
             self._json(self.server.engine.suggest_cuts(self.server.root, match[1], match[2]))
+        elif match := re.fullmatch(rf'/api/projects/({ID})/({CLIP})/visual', path):
+            project = self.server.engine.get_project(self.server.root, match[1])
+            clip = next((c for c in project.get('candidates', []) if c.get('id') == match[2]), None)
+            if clip is None:
+                raise RequestError(404, 'Candidate not found.')
+            if not self.server.visual_slots.acquire(blocking=False):
+                raise RequestError(429, 'Finish the current visual review before starting another scan.')
+            try:
+                source = self.server.engine.get_media_path(self.server.root, match[1], kind='source')
+                result = clipops_scene_review.scene_review(source, clip['start'], clip['end'])
+            finally:
+                self.server.visual_slots.release()
+            self._json({'candidate_id': match[2], **result})
         elif match := re.fullmatch(rf'/api/projects/({ID})/({CLIP})/creative', path):
             project = self.server.engine.get_project(self.server.root, match[1])
             clip = next((c for c in project.get('candidates', []) if c.get('id') == match[2]), None)
@@ -475,7 +490,7 @@ class DeskHandler(BaseHTTPRequestHandler):
         if path == '/api/import':
             self._upload()
             return
-        match = re.fullmatch(rf'/api/projects/({ID})/(edit|review|render|proxy|purge|propose)', path)
+        match = re.fullmatch(rf'/api/projects/({ID})/(edit|review|render|proxy|purge|propose|search-moments)', path)
         if not match:
             raise RequestError(404, 'Route not found.')
         project_id, action = match.groups()
@@ -484,6 +499,12 @@ class DeskHandler(BaseHTTPRequestHandler):
             if project_id in self.server.active:
                 raise RequestError(409, 'Wait for the current job to finish.')
             engine, root = self.server.engine, self.server.root
+            if action == 'search-moments':
+                if set(data) != {'query'}:
+                    raise RequestError(400, 'Provide a single topic or source quote.')
+                project = engine.get_project(root, project_id)
+                matches = creative_review.find_moments(project.get('segments', []), data['query'])
+                return self._json({'query': data['query'], 'method': 'offline_transcript_tokens', 'matches': matches})
             if action == 'propose':
                 if set(data) != {'candidate_id', 'instruction'} or not re.fullmatch(CLIP, str(data['candidate_id'])):
                     raise RequestError(400, 'Provide one candidate ID and supported edit instructions.')

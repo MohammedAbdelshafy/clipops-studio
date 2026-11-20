@@ -165,6 +165,46 @@ class DeskTests(unittest.TestCase):
             project['segments'] = old_rows
             project['candidates'] = old_candidates
 
+    def test_moment_search_and_visual_review_respect_session_and_do_not_edit(self):
+        project = self.project
+        old_source, old_rows, old_candidates = project['source'], project['segments'], project['candidates']
+        self.engine.edit_project.reset_mock()
+        try:
+            project['source'] = {'name':'authorized.mp4', 'duration':30}
+            project['segments'] = [{'start':0,'end':4,'text':'Why do customers ask for podcast clips?'},
+                                   {'start':4.1,'end':15,'text':'Because a coherent story helps people understand the full lesson.'}]
+            project['candidates'] = [{'id':'c01','start':0,'end':15,'score':60,'review':'pending'}]
+            url=f'/api/projects/{self.project_id}/search-moments'
+            body=json.dumps({'query':'customers podcast'})
+            headers={'Content-Type':'application/json'}
+            self.assertEqual(self.request('POST',url,body,**headers)[0],403)
+            auth=self.session()
+            self.assertEqual(self.request('POST',url,body,**{**auth,'X-ClipOps-CSRF':'bad'},**headers)[0],403)
+            status,_,data=self.request('POST',url,body,**auth,**headers)
+            self.assertEqual(status,200)
+            found=json.loads(data)
+            self.assertEqual(found['matches'][0]['start'],0)
+            self.assertEqual(found['matches'][0]['end'],15)
+            self.assertEqual(self.request('POST',url,json.dumps({'query':'***'}),**auth,**headers)[0],400)
+            self.assertEqual(self.request('POST',url,json.dumps({'query':'podcast','model':'remote'}),**auth,**headers)[0],400)
+            visual_url=f'/api/projects/{self.project_id}/c01/visual'
+            self.assertEqual(self.request('GET',visual_url)[0],403)
+            self.assertTrue(self.server.visual_slots.acquire(blocking=False))
+            try:
+                self.assertEqual(self.request('GET', visual_url, **auth)[0], 429)
+            finally:
+                self.server.visual_slots.release()
+            with patch('studio.clipops_scene_review.scene_review',return_value={
+                    'source_range':[0,15], 'scene_boundaries':[7.5], 'advisory_only':True}) as analyzer:
+                status,_,data=self.request('GET',visual_url,**auth)
+                self.assertEqual(status,200)
+                self.assertEqual(json.loads(data)['scene_boundaries'],[7.5])
+                analyzer.assert_called_once_with(self.media,0,15)
+            self.assertEqual(self.request('GET',visual_url.replace('/c01/','/c99/'),**auth)[0],404)
+            self.engine.edit_project.assert_not_called()
+        finally:
+            project['source'],project['segments'],project['candidates']=old_source,old_rows,old_candidates
+
     def test_batch_zip_requires_session_and_uses_private_temporary_storage(self):
         path = f'/api/projects/{self.project_id}/approved-delivery.zip'
         self.assertEqual(self.request('GET', path)[0], 403)
