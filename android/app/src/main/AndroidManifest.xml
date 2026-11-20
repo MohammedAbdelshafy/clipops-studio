@@ -1,15 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- No INTERNET, camera, broad storage, or account permissions required. -->
+    <!-- Only HTTPS/private backend access. No camera or broad storage permission. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:allowBackup="false"
-        android:label="ClipOps Pocket"
+        android:label="ClipOps Studio"
         android:icon="@drawable/clipops_icon"
         android:theme="@style/ClipOpsTheme"
         android:usesCleartextTraffic="false"
         android:supportsRtl="true">
         <activity
             android:name=".MainActivity"
+            android:exported="false"
+            android:screenOrientation="unspecified" />
+        <activity
+            android:name=".StudioActivity"
             android:exported="true"
             android:screenOrientation="unspecified">
             <intent-filter>
