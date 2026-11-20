@@ -73,7 +73,8 @@ jobs:
         run: |
           python -m pip install -r requirements-pilot.txt
           python -m pip install playwright==1.57.0
-          python -m playwright install --with-deps chromium
+          # Chrome Stable supplies proprietary MP4 codecs absent in bundled Chromium.
+          python -m playwright install --with-deps chrome
       - name: Generate original synthetic source
         run: |
           mkdir -p /tmp/clipops-fixtures
@@ -85,3 +86,12 @@ jobs:
           GEMINI_API_KEY: ''
         run: |
           python tools/test_studio_browser.py --fixtures /tmp/clipops-fixtures --screenshots /tmp/clipops-browser-evidence
+
+      - name: Upload browser screenshots for human visual review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipops-browser-evidence
+          path: /tmp/clipops-browser-evidence
+          if-no-files-found: ignore
+          retention-days: 7
