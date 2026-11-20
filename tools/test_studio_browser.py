@@ -125,11 +125,21 @@ def main():
             page.get_by_role('button',name='Render selected clips').click()
             expect(page.locator('#dialog')).not_to_be_visible()
             expect(page.locator('.monitor-head')).to_contain_text('Rendered preview',timeout=150000)
+            motion = page.get_by_role('button', name='Toggle cinematic video backdrop')
+            expect(motion).to_have_attribute('aria-pressed', 'true')
+            expect(page.locator('.ambient-preview')).to_have_count(1)
+            motion.click()
+            expect(motion).to_have_attribute('aria-pressed', 'false')
+            expect(page.locator('.ambient-preview')).to_have_count(0)
+            motion.click()
+            expect(page.locator('.ambient-preview')).to_have_count(1)
             assert abs(float(page.locator('#scrub').get_attribute('max')) - 7.45) < .06
             page.get_by_role('button',name='View source').click()
             expect(page.locator('.monitor-head')).to_contain_text('Source preview')
+            expect(page.locator('.ambient-preview')).to_have_count(0)
             page.get_by_role('button',name='View render').click()
             expect(page.locator('.monitor-head')).to_contain_text('Rendered preview')
+            expect(page.locator('.ambient-preview')).to_have_count(1)
             seek_preview(page, 2.2)
             page.evaluate('window.scrollTo(0, 0)')
             page.screenshot(path=str(args.screenshots/'studio-desktop.png'))
@@ -175,6 +185,16 @@ def main():
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             page.screenshot(path=str(args.screenshots/'studio-mobile.png'))
             print('Mobile width and desktop/mobile screenshots passed',flush=True)
+            reduced = browser.new_context(reduced_motion='reduce')
+            try:
+                reduced_page = reduced.new_page()
+                reduced_page.goto(url + '/#desk/' + job)
+                reduced_button = reduced_page.get_by_role('button', name='Toggle cinematic video backdrop')
+                expect(reduced_button).to_be_disabled()
+                expect(reduced_page.locator('.ambient-preview')).to_have_count(0)
+            finally:
+                reduced.close()
+            print('Ambient preview toggle and reduced-motion fallback passed',flush=True)
             assert not errors, errors
         finally:
             browser.close()

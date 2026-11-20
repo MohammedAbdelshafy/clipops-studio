@@ -3,7 +3,7 @@ name: ClipOps offline release gate
 on:
   pull_request:
     # Include the existing stacked PR base so the gate can run before merging.
-    branches: [main, feat/clipops-video-mvp-20261112]
+    branches: [main, feat/clipops-video-mvp-20261112, review/clipops-release-ci-2026-11-14, review/clipops-pilot-hardening-20261120]
     paths:
       - '*.py'
       - 'studio/**'
@@ -36,6 +36,8 @@ jobs:
           ffmpeg -hide_banner -version | head -n 1
       - name: Install local caption layout dependency
         run: python -m pip install -r requirements-pilot.txt
+      - name: Check browser application syntax
+        run: node --check studio/app.js
       - name: Run image-batch, video, export and review regressions
         env:
           CLIPOPS_ALLOW_PUBLISH: '0'
