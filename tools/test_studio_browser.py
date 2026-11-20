@@ -47,14 +47,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fixtures', required=True, type=Path)
     parser.add_argument('--screenshots', required=True, type=Path)
-    parser.add_argument('--chromium', default='/usr/bin/chromium')
+    parser.add_argument('--chromium', default=None, help='Optional Chrome/Chromium executable; branded Chrome supports H.264 playback')
     args = parser.parse_args()
     args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='clipops-desk-test-') as tmp, DeskServer(0, Path(tmp), pilot) as server, sync_playwright() as playwright:
         server.upload_store.chunk = 256 * 1024
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        executable = args.chromium if Path(args.chromium).is_file() else None
+        import shutil
+        executable = args.chromium or shutil.which('google-chrome') or shutil.which('google-chrome-stable') or shutil.which('chromium')
+        if args.chromium and not Path(args.chromium).is_file():
+            raise RuntimeError('The explicitly requested Chrome executable is missing')
         browser = playwright.chromium.launch(executable_path=executable, headless=True, args=['--disable-dev-shm-usage'])
         try:
             url = f'http://127.0.0.1:{server.server_port}'
