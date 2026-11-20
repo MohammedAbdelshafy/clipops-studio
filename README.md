@@ -2,6 +2,8 @@
 
 **Current scope: supervised local video editing and clipping pilot.** The repository implements private MP4/MOV/MKV/WebM import, optional offline transcription or reviewed timed JSON, clip discovery, edits, FFmpeg rendering, captions, technical QC, and approval-gated MP4/SRT/VTT export. It also retains the independent image-batching lane. It does **not** provide production multi-user accounts, public video hosting, or verified hands-off social publishing.
 
+**Android hybrid Studio:** [Private full desktop-on-phone guide](docs/HYBRID_ANDROID_STUDIO.md). Open the same Studio UI from an Android APK using an owner-verified Tailscale laptop backend or account-gated Cloud Shell. Offline Pocket remains a trim-only backup. Backend connection, media transfer and project sync are not automatic.
+
 **Android phone:** [Run in account-restricted Google Cloud Shell](docs/ANDROID_CLOUD_SHELL.md) using `bash START_CLIPOPS_CLOUD_SHELL.sh` after opening the repository in Cloud Shell. This is a session-based private preview, not persistent hosting.
 
 **Desktop release and outstanding work:** [November 20 integration audit](docs/DESKTOP_RELEASE_AUDIT_2026-11-20.md). The desktop app is the primary editing product; the native Android Pocket APK is an intentionally limited companion, not desktop parity.
