@@ -18,6 +18,7 @@ import threading
 from urllib.parse import urlsplit
 
 from studio_uploads import UploadStore, UploadError, TUS, EMPTY_RECEIPT, expires, checksum
+from free_fallbacks import free_routes
 
 ASSETS = Path(__file__).resolve().parent / 'studio'
 STATIC = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
@@ -210,6 +211,8 @@ class DeskHandler(BaseHTTPRequestHandler):
         elif path == '/api/session':
             self._json({'csrf': self.server.csrf, 'local_model': bool(self.server.model), 'upload_limit': self.server.upload_store.capacity, 'chunk_bytes': self.server.upload_store.chunk,
                         'local_sources': bool(self.server.source_dir)})
+        elif path == '/api/fallbacks':
+            self._json(free_routes(local_model=self.server.model is not None))
         elif path == '/api/local-sources' and self.server.source_dir:
             from itertools import islice
 
