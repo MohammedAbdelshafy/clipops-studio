@@ -18,3 +18,29 @@ def cloud_shell_origin(port: int, web_host: str) -> str:
     if len(labels) < 3 or labels[-2:] != ['cloudshell', 'dev'] or any(not _LABEL.fullmatch(x) for x in labels):
         raise ValueError('WEB_HOST must be the exact *.cloudshell.dev hostname issued by Cloud Shell')
     return f'https://{port}-{web_host}'
+
+
+def tailnet_origin(value: str) -> str:
+    """Allow only an exact private Tailscale Serve DNS origin, never arbitrary URLs.
+
+    Tailscale Funnel (public exposure) is NOT enabled or configured here.
+    TLS and tailnet ACLs are supplied by the separately approved Serve device.
+    """
+    from urllib.parse import urlsplit
+
+    if not isinstance(value, str) or len(value) > 253 or value.strip() != value:
+        raise ValueError('Provide a private HTTPS Tailscale Serve address')
+    try:
+        url = urlsplit(value)
+        host = url.hostname
+        port = url.port
+    except ValueError as exc:
+        raise ValueError('Invalid Tailscale HTTPS address') from exc
+    if (url.scheme != 'https' or not host or port is not None or
+            url.username or url.password or url.path not in ('', '/') or
+            url.query or url.fragment or url.netloc != host):
+        raise ValueError('Use only https://<device>.<tailnet>.ts.net without a path or port')
+    labels = host.split('.')
+    if len(labels) < 4 or labels[-2:] != ['ts', 'net'] or not all(_LABEL.fullmatch(label) for label in labels):
+        raise ValueError('Only an exact *.ts.net private Tailscale device is allowed')
+    return f'https://{host}'
