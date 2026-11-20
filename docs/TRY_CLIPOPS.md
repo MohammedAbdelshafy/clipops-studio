@@ -1,4 +1,4 @@
-# Test ClipOps Studio locally (review build)
+# Test ClipOps Studio locally — integrated review build
 
 This build is an **offline-first, single-user pilot**, not a hosted multi-tenant agency app. It must run on a trusted workstation with Python 3.11+, FFmpeg/FFprobe, libass, Fontconfig, and Pillow. It does not need a paid model or API key if you provide a timestamped transcript.
 
@@ -11,20 +11,17 @@ sudo apt-get update
 sudo apt-get install -y python3 python3-venv python3-pip git ffmpeg fontconfig fonts-dejavu-core fonts-liberation
 ```
 
-2. Download the current main branch **after the release PRs are merged**:
+2. Download the **verified integrated test package** from the successful GitHub Actions run for the [integration review PR](https://github.com/MohammedAbdelshafy/clipops-studio/pulls) (artifact named **ClipOps-Studio-TEST**). The package is generated *only if backend and desktop/mobile browser gates pass*. Extract `ClipOps-Studio-TEST.zip` and open the extracted `ClipOps-Studio-TEST` directory.
+
+   Alternatively, download the exact [integration branch source archive](https://github.com/MohammedAbdelshafy/clipops-studio/archive/refs/heads/review/clipops-integrated-test-build-20261120.zip) if the CI artifact is unavailable. This source archive is NOT the tested release artifact and does not include its SHA-256 build manifest.
+
+3. Launch from Ubuntu/WSL2 inside the extracted folder:
 
 ```bash
-git clone https://github.com/MohammedAbdelshafy/clipops-studio.git
-cd clipops-studio
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-pilot.txt
+bash START_CLIPOPS.sh
 ```
 
-3. Launch the review desk:
-
-```bash
-./launch-studio --root "$HOME/ClipOps-private" --port 8765
-```
+   On Windows with WSL2 Ubuntu installed, you can also open PowerShell in the extracted folder and run `./START_CLIPOPS_WINDOWS.ps1`. This starts the Linux pilot; native Windows and macOS are not qualified. The first launch installs the free pinned Pillow dependency if missing. No cloud API keys are required.
 
 Open **http://127.0.0.1:8765** on the same workstation. For WSL2, open that address in your Windows browser while the Ubuntu terminal is running. The terminal remains running until you press Ctrl+C.
 
@@ -76,3 +73,13 @@ The editor binds to `127.0.0.1` and is intended for one trusted operating-system
 - [ ] Download MP4, SRT and VTT; verify all remain correct after replay
 
 The project is ready for **supervised local evaluation** when the merged build passes CI and the user completes this checklist. It is not certified for unattended public ingest or publishing.
+
+## Integrated features to verify
+
+- [ ] Open **Creative review**, analyze a clip, inspect exact source timestamps, and preview an edit instruction without applying it.
+- [ ] Apply the reviewed edit, confirm the old delivery approval is invalidated, then rerender and reapprove.
+- [ ] Export **Download approved batch ZIP**, inspect `delivery-manifest.json`, SRT, VTT and MP4, and verify source footage is excluded.
+- [ ] Try **Free fallbacks** without uploading to any third-party service.
+- [ ] Open the cinematic ambient preview and confirm reduced-motion preference disables it.
+
+The CI package is a **single-user local test app**, not a standalone Windows executable or public hosted service. Editing footage requires FFmpeg and rights confirmation. Privacy and approval gates must stay enabled.
