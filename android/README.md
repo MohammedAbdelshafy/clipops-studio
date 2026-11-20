@@ -2,7 +2,7 @@
 
 This is a real installable Android application, **not** a Termux script or a WebView shortcut.
 
-- Native Android Media3 player and on-device Transformer. Android 10+.
+- Native Android Media3 player and on-device Transformer. Android 10+. Compiled against Android API 36.
 - Pick a video using Android's document picker, preview, mark in/out, select original/vertical/square framing, render a <=180-second clip, save to Movies/ClipOps, share using Android's share sheet.
 - Entire trim pipeline is **offline**. No INTERNET permission, no accounts, no telemetry, no paid providers, no upload.
 - Cropping modes use fit/padding to preserve content rather than pretending to do automatic speaker tracking.
@@ -10,7 +10,7 @@ This is a real installable Android application, **not** a Termux script or a Web
 
 **Deliberate scope:** This APK does NOT yet port the desktop Python/FFmpeg ranker, AI transcription, multi-speaker effects, 15–20 GiB processing guarantees, brand templates, or full batch factory. Those remain in the desktop/local-first ClipOps Studio, separately available in GitHub. The Hatchable ClipOps Content Studio is a separate hosted *transcript-drafting* companion, not the native renderer.
 
-Build on GitHub Actions `ClipOps Pocket Android APK` (Java 17 / Gradle 8.11.1 / AGP 8.9.2 / Media3 1.11.1). Artifacts are unsigned-for-release but debug-signed for internal installation. This APK has not been accepted on a real physical device until you test it. A Google Play release needs a secure production keystore, store policy review, and user approval.
+Build on GitHub Actions `ClipOps Pocket Android APK` (Java 17 / Gradle 8.13 / AGP 8.11.1 / Media3 1.11.1). Artifacts are unsigned-for-release but debug-signed for internal installation. This APK has not been accepted on a real physical device until you test it. A Google Play release needs a secure production keystore, store policy review, and user approval.
 
 ## Install (Android)
 
