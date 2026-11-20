@@ -2,8 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- No INTERNET, camera, broad storage, or account permissions required. -->
     <application
+        android:name="com.chaquo.python.android.PyApplication"
         android:allowBackup="false"
-        android:label="ClipOps Pocket"
+        android:label="ClipOps Studio"
         android:icon="@drawable/clipops_icon"
         android:theme="@style/ClipOpsTheme"
         android:usesCleartextTraffic="false"
