@@ -7,7 +7,9 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import re
 import threading
+import time
 from urllib.parse import urlparse
 
 from playwright.sync_api import expect, sync_playwright
@@ -43,11 +45,82 @@ def seek_preview(page, seconds):
     assert diagnostic["passed"], f"Foreground browser preview failed to decode/seek: {diagnostic}"
 
 
+def wait_for_upload_and_project(page, ctx, url, upload_id, source, chunk_bytes, headers, chunk_seconds):
+    """Wait on observable upload progress, then on the real project page.
+
+    The forced 256 KiB test chunk makes a ~44 MiB fixture ~175 round-trips.
+    A flat timeout ignores both that workload and a stalled transfer, so the
+    budget is derived from the measured first-chunk cost and the actual chunk
+    count, and progress is checked against the server's tus offset. Both the
+    overall deadline and the no-progress deadline are bounded.
+    """
+    total = source.stat().st_size
+    chunks = -(-total // chunk_bytes)
+    per_chunk = min(1.5, max(0.08, chunk_seconds * 3))
+    budget_ms = int(min(8 * 60_000, max(30_000, chunks * per_chunk * 1000 + 20_000)))
+    stall_s = max(15.0, per_chunk * 8)
+    deadline = time.monotonic() + budget_ms / 1000
+    last_offset = 0
+    last_progress = time.monotonic()
+    last_stage = 'starting'
+    last_chunk = 0
+    while time.monotonic() < deadline:
+        try:
+            last_stage = page.locator('#upload-message').text_content(timeout=500) or last_stage
+        except Exception:
+            pass
+        # Browser progress is authoritative: the server may retire the tus
+        # session as soon as /complete finishes, so HEAD can legitimately 404.
+        shown = re.search(r'(\d+) of (\d+) MiB confirmed', last_stage)
+        upload_finished = 'Verifying' in last_stage or 'opening the project' in last_stage
+        if shown:
+            shown_bytes = int(shown.group(1)) * 1024 * 1024
+            if shown_bytes > last_offset:
+                last_offset = shown_bytes
+                last_chunk = -(-last_offset // chunk_bytes)
+                last_progress = time.monotonic()
+        if upload_finished:
+            last_progress = time.monotonic()
+        if page.get_by_role('heading', name='The editing room', exact=True).is_visible() and \
+                page.locator('[data-clip]').count() > 0:
+            expect(page.get_by_role('heading', name='The editing room', exact=True)).to_be_visible(timeout=5000)
+            expect(page.locator('[data-clip]').first).to_be_visible(timeout=5000)
+            return budget_ms, int((deadline - time.monotonic()) * 1000), chunks
+        try:
+            reply = ctx.request.head(url + '/api/uploads/' + upload_id, headers=headers, timeout=5000)
+            if reply.status == 200:
+                offset = int(reply.headers.get('Upload-Offset', '0'))
+                if offset > last_offset:
+                    last_offset = offset
+                    last_chunk = -(-offset // chunk_bytes)
+                    last_progress = time.monotonic()
+                elif offset < total and not upload_finished and time.monotonic() - last_progress > stall_s:
+                    raise AssertionError(
+                        f'Upload stalled at chunk {last_chunk}/{chunks} '
+                        f'({last_offset}/{total} bytes); last stage: {last_stage!r}')
+            elif reply.status not in (404, 410):
+                raise AssertionError(f'Upload status check returned HTTP {reply.status}; last stage: {last_stage!r}')
+        except AssertionError:
+            raise
+        except Exception as exc:
+            last_stage = f'status check error: {exc}'
+            if time.monotonic() - last_progress > stall_s:
+                raise AssertionError(
+                    f'Upload status unavailable for {stall_s:.0f}s at chunk {last_chunk}/{chunks}; '
+                    f'last stage: {last_stage!r}') from exc
+        page.wait_for_timeout(250)
+    raise AssertionError(
+        f'Upload/project deadline {budget_ms}ms exhausted at chunk {last_chunk}/{chunks} '
+        f'({last_offset}/{total} bytes); last stage: {last_stage!r}')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fixtures', required=True, type=Path)
     parser.add_argument('--screenshots', required=True, type=Path)
     parser.add_argument('--chromium', default=None, help='Optional Chrome/Chromium executable; branded Chrome supports H.264 playback')
+    parser.add_argument('--no-route-filter', action='store_true', help='Leave browser network unmodified')
+    parser.add_argument('--upload-only', action='store_true', help='Stop after upload and project validation')
     args = parser.parse_args()
     args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='clipops-desk-test-') as tmp, DeskServer(0, Path(tmp), pilot) as server, sync_playwright() as playwright:
@@ -62,7 +135,8 @@ def main():
         try:
             url = f'http://127.0.0.1:{server.server_port}'
             ctx = browser.new_context(viewport={'width':1390,'height':1000}, accept_downloads=True)
-            ctx.route('**/*', lambda route: route.continue_() if urlparse(route.request.url).netloc == f'127.0.0.1:{server.server_port}' else route.abort())
+            if not args.no_route_filter:
+                ctx.route('**/*', lambda route: route.continue_() if urlparse(route.request.url).netloc == f'127.0.0.1:{server.server_port}' else route.abort())
             page = ctx.new_page()
             errors = []
             page.on('pageerror', lambda err: errors.append(str(err)))
@@ -92,9 +166,11 @@ def main():
             with source.open('rb') as stream:
                 block = stream.read(session['chunk_bytes'])
             uploader = url + created.headers['location']
+            chunk_started = time.monotonic()
             part = ctx.request.patch(uploader,data=block,headers={**headers,'Upload-Offset':'0',
                 'Content-Type':'application/offset+octet-stream',
                 'Upload-Checksum':'sha256 '+b64encode(sha256(block).digest()).decode()})
+            chunk_seconds = time.monotonic() - chunk_started
             assert part.status == 204
             form.locator('[name="video"]').evaluate('async (field,id) => localStorage.setItem(await fileKey(field.files[0]),id)', upload_id)
             page.reload()
@@ -103,8 +179,13 @@ def main():
             form.locator('[name="video"]').set_input_files(str(source))
             form.locator('[name="rights"]').check()
             form.get_by_role('button',name='Import & process').click()
-            expect(page.get_by_role('heading',name='The editing room', exact=True)).to_be_visible(timeout=30000)
-            expect(page.locator('[data-clip]').first).to_be_visible(timeout=30000)
+            budget, remaining, chunks = wait_for_upload_and_project(
+                page, ctx, url, upload_id, source, session['chunk_bytes'], headers, chunk_seconds)
+            print(f'Upload/project wait: {chunks} chunks, first chunk {chunk_seconds:.3f}s, '
+                  f'budget {budget}ms, {remaining}ms unused, route_filter={not args.no_route_filter}', flush=True)
+            if args.upload_only:
+                print('Upload-only validation passed', flush=True)
+                return
             job = page.url.split('/')[-1]
             assert job == upload_id
             clip = page.locator('[data-clip]').first.get_attribute('data-clip')
@@ -149,11 +230,11 @@ def main():
             detail.get_by_role('button',name='Save clip edits').click()
             expect(page.get_by_role('status').last).to_have_text('Clip edits saved.')
             page.get_by_role('button',name='Review pause and filler cuts').click()
-            page.get_by_label('Reviewed source intervals').fill('3.45, 3.67')
+            page.get_by_label('Reviewed source intervals').fill('4.70, 5.10')
             page.get_by_role('button',name='Save reviewed cuts').click()
             expect(page.get_by_role('status').last).to_have_text('Reviewed cuts saved.')
             page.get_by_role('button',name='Edit punch-ins').click()
-            page.get_by_label('Timed punch-ins').fill('4.2, 6.0, 1.08')
+            page.get_by_label('Timed punch-ins').fill('1.20, 2.40, 1.08')
             page.get_by_role('button',name='Save punch-ins').click()
             expect(page.get_by_role('status').last).to_have_text('Punch-ins saved.')
             page.get_by_role('button',name='Render batch').click()
@@ -168,7 +249,7 @@ def main():
             expect(page.locator('.ambient-preview')).to_have_count(0)
             motion.click()
             expect(page.locator('.ambient-preview')).to_have_count(1)
-            assert abs(float(page.locator('#scrub').get_attribute('max')) - 7.45) < .06
+            assert abs(float(page.locator('#scrub').get_attribute('max')) - 7.27) < .06
             page.get_by_role('button',name='View source').click()
             expect(page.locator('.monitor-head')).to_contain_text('Source preview')
             expect(page.locator('.ambient-preview')).to_have_count(0)

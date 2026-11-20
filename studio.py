@@ -560,7 +560,9 @@ class DeskHandler(BaseHTTPRequestHandler):
                 raise RequestError(405, 'This route does not support the request method.')
             else:
                 self._get(path)
-        except (BrokenPipeError, ConnectionResetError, socket.timeout):
+        except (ConnectionError, socket.timeout):
+            # A client aborting a ranged media GET (WinError 10053) is not a server
+            # fault; close quietly instead of reporting a storage outage.
             self.close_connection = True
         except (RequestError, UploadError) as exc:
             self._json({'error': str(exc)}, exc.status)
