@@ -19,6 +19,9 @@ class DeskTests(unittest.TestCase):
         cls.root = Path(cls.files.name)
         cls.media = cls.root / 'authorized.mp4'
         cls.media.write_bytes(bytes(range(100)))
+        cls.webm = cls.root / 'review.webm'
+        cls.webm.write_bytes(bytes(range(60)))
+        
         cls.engine = Mock()
         cls.project_id = 'b' * 32
         cls.project = {'id': cls.project_id, 'name': 'Test project', 'source': {'name': 'authorized.mp4'},
@@ -26,6 +29,7 @@ class DeskTests(unittest.TestCase):
         cls.engine.get_project.return_value = cls.project
         cls.engine.list_projects.return_value = [cls.project]
         cls.engine.get_media_path.return_value = cls.media
+        cls.engine.browser_preview.return_value = cls.webm
         cls.server = DeskServer(0, cls.root, cls.engine)
         cls.addClassCleanup(cls.server.server_close)
         thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
@@ -91,6 +95,17 @@ class DeskTests(unittest.TestCase):
             self.assertEqual(self.request('GET', url.replace('preview','export'), **auth)[0], 403)
         finally:
             self.engine.get_media_path.side_effect = None
+
+    def test_webm_preview_is_authenticated_and_preserves_export_gate(self):
+        url = '/media/' + self.project_id + '/c01/webm'
+        self.assertEqual(self.request('GET', url)[0], 403)
+        auth = self.session()
+        status, headers, data = self.request('GET', url, Range='bytes=4-7', **auth)
+        self.assertEqual(status, 206)
+        self.assertEqual(headers['Content-Type'], 'video/webm')
+        self.assertEqual(headers['Content-Range'], 'bytes 4-7/60')
+        self.assertEqual(data, bytes(range(4,8)))
+        self.engine.browser_preview.assert_called_with(self.root, self.project_id, 'c01')
 
     def test_upload_validates_rights_filename_and_content_before_pipeline(self):
         auth = self.session()
