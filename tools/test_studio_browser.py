@@ -55,7 +55,10 @@ def main():
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         executable = args.chromium if Path(args.chromium).is_file() else None
-        browser = playwright.chromium.launch(executable_path=executable, headless=True, args=['--disable-dev-shm-usage'])
+        # Branded Chrome includes the H.264/AAC codecs used in actual ClipOps MP4 exports.
+        # Playwright's bundled Chromium is not a reliable H.264 decoder on Linux.
+        browser_options = {'executable_path': executable} if executable else {'channel': 'chrome'}
+        browser = playwright.chromium.launch(**browser_options, headless=True, args=['--disable-dev-shm-usage'])
         try:
             url = f'http://127.0.0.1:{server.server_port}'
             ctx = browser.new_context(viewport={'width':1390,'height':1000}, accept_downloads=True)
