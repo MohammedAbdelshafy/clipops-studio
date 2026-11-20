@@ -3,7 +3,7 @@ name: ClipOps offline release gate
 on:
   pull_request:
     # Include the existing stacked PR base so the gate can run before merging.
-    branches: [main, feat/clipops-video-mvp-20261112, review/clipops-release-ci-2026-11-14, review/clipops-pilot-hardening-20261120]
+    branches: [main, feat/clipops-video-mvp-20261112, review/clipops-release-ci-2026-11-14, review/clipops-pilot-hardening-20261120, review/clipops-cinematic-video-ui-20261120]
     paths:
       - '*.py'
       - 'studio/**'
@@ -49,3 +49,38 @@ jobs:
           GEMINI_API_KEY: ''
         run: |
           python -m unittest discover -v
+
+  browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout reviewed source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Install FFmpeg and fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg fontconfig fonts-dejavu-core fonts-liberation
+      - name: Install local editor and browser requirements
+        run: |
+          python -m pip install -r requirements-pilot.txt
+          python -m pip install playwright==1.57.0
+          python -m playwright install --with-deps chromium
+      - name: Generate original synthetic source
+        run: |
+          mkdir -p /tmp/clipops-fixtures
+          python tools/make_fixtures.py /tmp/clipops-fixtures --only studio --espeak ''
+      - name: Exercise desktop/mobile editor and delivery gates
+        env:
+          CLIPOPS_ALLOW_PUBLISH: '0'
+          POSTIZ_API_KEY: ''
+          GEMINI_API_KEY: ''
+        run: |
+          python tools/test_studio_browser.py --fixtures /tmp/clipops-fixtures --screenshots /tmp/clipops-browser-evidence
