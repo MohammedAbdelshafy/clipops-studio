@@ -84,12 +84,12 @@ def project_dir(root, job_id):
 
 
 @contextmanager
-def lock(directory, filename):
-    """The OS releases this nonblocking lock even if a worker is killed."""
+def lock(directory, filename, *, wait=False):
+    """The OS releases this lock on termination. Only cache readers opt into waiting."""
     fd = os.open(directory / filename, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise ValueError("A worker is busy. Retry when the current operation finishes.") from exc
         yield
@@ -538,7 +538,9 @@ def browser_preview(root, job_id, clip_id):
     project edits, atomically installed, and never sent to another service.
     """
     directory = project_dir(root, job_id)
-    with lock(directory, ".worker"):
+    # Both the cinematic layer and foreground player can ask at once. Wait for
+    # one conversion and reuse it; do not return an HTTP error to the loser.
+    with lock(directory, ".worker", wait=True):
         state = load_json(directory / PROJECT_FILE)
         source = approved_media(directory, candidate(state, clip_id), "preview")
         output = source.with_name("preview.webm")
