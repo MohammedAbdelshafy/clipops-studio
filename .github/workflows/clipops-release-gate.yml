@@ -51,7 +51,8 @@ jobs:
           python -m unittest discover -v
 
   browser-smoke:
-    runs-on: ubuntu-latest
+    # Playwright 1.57 does not yet support the ubuntu-26.04 hosted image.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
