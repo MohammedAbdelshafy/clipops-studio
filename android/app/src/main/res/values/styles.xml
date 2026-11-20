@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="ClipOpsTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:colorAccent">#B7F46D</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#090F17</item>
+        <item name="android:navigationBarColor">#090F17</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+</resources>
