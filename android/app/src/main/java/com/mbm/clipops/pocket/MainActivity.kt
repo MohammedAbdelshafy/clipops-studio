@@ -132,7 +132,7 @@ class MainActivity : Activity() {
         return Button(this).apply {
             this.text = text
             isAllCaps = false
-            setTextColor(if (highlighted) background else ink)
+            setTextColor(if (highlighted) this@MainActivity.background else ink)
             textSize = 14f
             background = rounded(if (highlighted) accent else panel)
             val layout = LinearLayout.LayoutParams(
@@ -147,7 +147,7 @@ class MainActivity : Activity() {
     private fun renderInterface() {
         val scroller = ScrollView(this).apply {
             isFillViewport = true
-            setBackgroundColor(background)
+            setBackgroundColor(this@MainActivity.background)
         }
         val body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
