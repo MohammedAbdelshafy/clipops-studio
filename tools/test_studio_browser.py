@@ -18,19 +18,29 @@ from studio import DeskServer
 
 
 def seek_preview(page, seconds):
-    # Execute as a callable through the locator instead of altering the desk's CSP.
-    assert page.locator('#video').evaluate('''async (video, seconds) => {
-        const deadline = performance.now() + 10000;
-        while (performance.now() < deadline && video.readyState === 0) {
+    """Verify a decoded seek and expose the media element's real state on failure."""
+    # Execute through the locator, not by weakening the application's CSP.
+    diagnostic = page.locator('#video').evaluate('''async (video, seconds) => {
+        const deadline = performance.now() + 20000;
+        video.pause();
+        while (performance.now() < deadline && video.readyState === 0 && !video.error) {
             await new Promise(resolve => setTimeout(resolve, 50));
         }
-        video.currentTime = seconds;
-        while (performance.now() < deadline) {
-            if (video.readyState >= 2 && Math.abs(video.currentTime - seconds) < .12) return true;
+        if (!video.error && video.readyState > 0) video.currentTime = seconds;
+        while (performance.now() < deadline && !video.error) {
+            if (!video.seeking && video.readyState >= 2 &&
+                Math.abs(video.currentTime - seconds) < .12) return {passed: true};
             await new Promise(resolve => setTimeout(resolve, 50));
         }
-        return false;
+        return {passed: false, src: new URL(video.currentSrc || video.src).pathname,
+          readyState: video.readyState, networkState: video.networkState,
+          errorCode: video.error?.code ?? null, errorMessage: video.error?.message ?? '',
+          duration: video.duration, currentTime: video.currentTime,
+          seekable: video.seekable.length ? [video.seekable.start(0), video.seekable.end(video.seekable.length-1)] : [],
+          buffered: video.buffered.length ? [video.buffered.start(0), video.buffered.end(video.buffered.length-1)] : [],
+          seeking: video.seeking, paused: video.paused};
     }''', seconds)
+    assert diagnostic["passed"], f"Foreground browser preview failed to decode/seek: {diagnostic}"
 
 
 def main():
@@ -194,6 +204,7 @@ def main():
             reduced = browser.new_context(reduced_motion='reduce')
             try:
                 reduced_page = reduced.new_page()
+                reduced_page.goto(url)
                 reduced_page.goto(url + '/#desk/' + job)
                 reduced_button = reduced_page.get_by_role('button', name='Toggle cinematic video backdrop')
                 expect(reduced_button).to_be_disabled()
