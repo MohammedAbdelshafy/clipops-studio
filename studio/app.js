@@ -245,7 +245,13 @@ function drawTab() {
   area.innerHTML = ({details,captions,creative:creativeReview,settings,review})[state.tab]();
 }
 function motionAllowed() {
-  return !window.matchMedia('(prefers-reduced-motion: reduce)').matches && !navigator.connection?.saveData;
+  return !window.matchMedia('(prefers-reduced-motion: reduce)').matches &&
+    !window.matchMedia('(max-width: 640px)').matches && !navigator.connection?.saveData;
+}
+function needsWebmReview(video) {
+  // Preview only: the approved delivery always stays high-quality H.264/AAC MP4.
+  return !video.canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"') &&
+    Boolean(video.canPlayType('video/webm; codecs="vp8, opus"'));
 }
 function syncAmbient() {
   const stage = document.querySelector('.cinema-stage');
@@ -257,7 +263,7 @@ function syncAmbient() {
   if (enabled && !background) {
     const video = document.createElement('video');
     video.className = 'ambient-preview';
-    video.src = mediaUrl('preview',clip) + '?v=' + state.version;
+    video.src = document.querySelector('#video')?.src || (mediaUrl('preview',clip) + '?v=' + state.version);
     video.muted = true;
     video.loop = true;
     video.autoplay = true;
@@ -275,7 +281,7 @@ function syncAmbient() {
   toggle.setAttribute('aria-pressed',String(enabled));
   toggle.textContent = 'Ambient video: ' + (enabled ? 'On' : 'Off');
   toggle.title = !clip?.rendered ? 'Render a clip to preview its ambient background.' :
-    !motionAllowed() ? 'Motion is disabled by your reduced-motion or data-saver preference.' : '';
+    !motionAllowed() ? 'Ambient motion is disabled on compact screens or by reduced-motion/data-saver preferences.' : '';
 }
 function draw() {
   setNav();
@@ -291,6 +297,9 @@ function bindVideo(requestedTime=null, fullSource=false) {
   if (!video) return;
   const c = current();
   const rendered = c?.rendered && !state.sourceView && !fullSource;
+  if (rendered && needsWebmReview(video)) {
+    video.src = mediaUrl('webm', c) + '?v=' + state.version;
+  }
   const start = 0;
   const end = rendered ? c.render?.duration ?? c.end - c.start : state.project.source.duration;
   const seek = requestedTime ?? (rendered ? 0 : (c?.start || 0));
@@ -704,6 +713,7 @@ document.addEventListener('change', event => {
 });
 window.addEventListener('hashchange',() => route().catch(notifyError));
 window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change',syncAmbient);
+window.matchMedia('(max-width: 640px)').addEventListener('change',syncAmbient);
 document.addEventListener('visibilitychange', () => {
   const background = document.querySelector('.ambient-preview');
   if (!background) return;
