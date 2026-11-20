@@ -8,7 +8,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.mbm.clipops.pocket"
+        applicationId = "com.mbm.clipops.studio"
         minSdk = 29
         targetSdk = 35
         versionCode = 2
