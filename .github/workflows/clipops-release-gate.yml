@@ -84,4 +84,5 @@ jobs:
           POSTIZ_API_KEY: ''
           GEMINI_API_KEY: ''
         run: |
-          python tools/test_studio_browser.py --fixtures /tmp/clipops-fixtures --screenshots /tmp/clipops-browser-evidence
+          test -x "$(command -v google-chrome)"
+          python tools/test_studio_browser.py --chromium "$(command -v google-chrome)" --fixtures /tmp/clipops-fixtures --screenshots /tmp/clipops-browser-evidence
