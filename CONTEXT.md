@@ -1,29 +1,28 @@
 ---
 type: repository
-status: active
+status: active-local-pilot
 owner_repo: MohammedAbdelshafy/clipops-studio
 product_name: ClipOps Studio
 source_of_truth: https://github.com/MohammedAbdelshafy/clipops-studio
 ---
 
-# ClipOps Studio CONTEXT
+# ClipOps Studio context
 
-One job: prepare batches of image assets using the code that exists in this repository. The full Remotion video pipeline described in the README is planned reference material, not shipped functionality.
+The production candidate is a **single-user, local-first review desk**, not a public hosted agency editing service. The implemented pipeline is: authorized local input or resumable transfer → reviewed timed transcript or preinstalled offline ASR → ranked candidates → editable selections and captions → FFmpeg render and QC → exact-output human approval → MP4/SRT/VTT export. Optional social scheduling remains a separately gated action.
 
-## Inputs
-- Current capabilities and roadmap caveats: [README](README.md)
-- Implementation: [batch_images.py](batch_images.py)
-- Tests: [test_batch_images.py](test_batch_images.py)
+## Code and tests
 
-## Process
-1. Read the batch brief and confirm output requirements.
-2. Run the existing image-batch utility in dry-run or a safe sample first.
-3. Check the generated files and any provider/runtime assumptions.
-4. Keep the future video workflow separate until its code is committed and tested.
-5. Track time and accepted outputs before offering a paid production package.
+- `pilot.py`, `pilot_edit.py`, `pilot_intelligence.py`, `pilot_qc.py`: local media and approval workflow.
+- `studio.py`, `studio/`, `studio_uploads.py`: loopback browser UI and resumable import.
+- `free_fallbacks.py`: read-only, non-automatic alternatives to optional APIs and tools.
+- `clipops.py`: legacy video CLI and opt-in Postiz connector.
+- `batch_images.py`: original image batch service preserved.
+- `test_*.py`, `tools/test_studio_browser.py`: unit, integration and real-browser smoke coverage.
 
-## Output
-A batch of prepared images from the current utility, plus any run notes.
+## Operational limits
 
-## Check
-Run the repository's documented tests. Never sell the planned Remotion pipeline as available until its code, render host, quality checks and delivery path are present and verified.
+Use rights-cleared local media. Keep `CLIPOPS_ALLOW_PUBLISH=0` by default. Confirm named approval of exact rendered bytes before delivery. Do not silently retry uncertain Postiz submissions, send personal data to external apps, or activate paid providers on API failure. Use manual export and the free fallback directory instead.
+
+[Try ClipOps](docs/TRY_CLIPOPS.md) · [Pilot instructions](PILOT.md) · [Fallback directory](docs/FREE_FALLBACKS.md) · [Measured release gates](docs/RC_HARDENING_RESULTS.md).
+
+The Remotion generator in the README remains **historical roadmap**, not part of the implemented FFmpeg pilot.

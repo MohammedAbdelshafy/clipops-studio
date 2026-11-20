@@ -1,19 +1,10 @@
 # ClipOps Studio
 
-> **Repo-state note (2026-10-06):** this checkout ships only the overnight
-> image batch lane — `batch_images.py` (+ `test_batch_images.py`, 34 hermetic
-> tests). The Remotion video-pipeline sections below (`template/`,
-> `generate-video.mjs`, `workflow/`, `out/`) describe a **planned component
-> that is not committed to this repo yet** — it is a roadmap, not shipped
-> code. Past-tense "verified" claims under those sections refer to the
-> 2026-10-04 spike environment, not to files in this checkout.
+**Current scope: supervised local video editing and clipping pilot.** The repository implements private MP4/MOV/MKV/WebM import, optional offline transcription or reviewed timed JSON, clip discovery, edits, FFmpeg rendering, captions, technical QC, and approval-gated MP4/SRT/VTT export. It also retains the independent image-batching lane. It does **not** provide production multi-user accounts, public video hosting, or verified hands-off social publishing.
 
-**Current scope:** this repository ships an overnight image-batch utility. The planned video workflow described below is documentation for a future addition, not a shipped feature.
+Run `./launch-studio` after installing the free local dependencies. [First test](docs/TRY_CLIPOPS.md) · [Pilot guide](PILOT.md) · [Offline-first fallbacks](docs/FREE_FALLBACKS.md) · [Evidence and limits](docs/RC_HARDENING_RESULTS.md).
 
-**Status:** the video pipeline below is **planned** (spike-verified
-2026-10-04 in a separate environment — the Remotion project is not in this
-repo). What ships here today is the overnight image batch lane
-(`batch_images.py`), dry-run capable with no key.
+> **Historical roadmap:** The Remotion generator documented below was scoped in October 2026 but is **not** in this repository. It is separate from the implemented FFmpeg pilot. Historical test claims refer to their recorded environments, not the current browser test.
 
 ## Planned pipeline: layout (not in this repo yet)
 
