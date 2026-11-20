@@ -18,6 +18,7 @@ import threading
 from urllib.parse import urlsplit
 
 from studio_uploads import UploadStore, UploadError, TUS, EMPTY_RECEIPT, expires, checksum
+import clipops_creative_review as creative_review
 
 ASSETS = Path(__file__).resolve().parent / 'studio'
 STATIC = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
@@ -222,6 +223,13 @@ class DeskHandler(BaseHTTPRequestHandler):
             self._json(self.server.details(match[1]))
         elif match := re.fullmatch(rf'/api/projects/({ID})/({CLIP})/cuts', path):
             self._json(self.server.engine.suggest_cuts(self.server.root, match[1], match[2]))
+        elif match := re.fullmatch(rf'/api/projects/({ID})/({CLIP})/creative', path):
+            project = self.server.engine.get_project(self.server.root, match[1])
+            clip = next((c for c in project.get('candidates', []) if c.get('id') == match[2]), None)
+            if clip is None:
+                raise RequestError(404, 'Candidate not found.')
+            rows = creative_review.clean_segments(project.get('segments', []))
+            self._json(creative_review.review_candidate(rows, clip))
         elif match := re.fullmatch(rf'/media/({ID})/(source|({CLIP})/(preview|export|srt|vtt))', path):
             kind = match[4] or 'source'
             file = self.server.engine.get_media_path(self.server.root, match[1], clip_id=match[3], kind=kind)
@@ -431,7 +439,7 @@ class DeskHandler(BaseHTTPRequestHandler):
         if path == '/api/import':
             self._upload()
             return
-        match = re.fullmatch(rf'/api/projects/({ID})/(edit|review|render|proxy|purge)', path)
+        match = re.fullmatch(rf'/api/projects/({ID})/(edit|review|render|proxy|purge|propose)', path)
         if not match:
             raise RequestError(404, 'Route not found.')
         project_id, action = match.groups()
@@ -440,6 +448,14 @@ class DeskHandler(BaseHTTPRequestHandler):
             if project_id in self.server.active:
                 raise RequestError(409, 'Wait for the current job to finish.')
             engine, root = self.server.engine, self.server.root
+            if action == 'propose':
+                if set(data) != {'candidate_id', 'instruction'} or not re.fullmatch(CLIP, str(data['candidate_id'])):
+                    raise RequestError(400, 'Provide one candidate ID and supported edit instructions.')
+                project = engine.get_project(root, project_id)
+                clip = next((c for c in project.get('candidates', []) if c.get('id') == data['candidate_id']), None)
+                if clip is None:
+                    raise RequestError(404, 'Candidate not found.')
+                return self._json(creative_review.propose_edit(clip, data['instruction'], project['source']['duration']))
             if action == 'edit':
                 allowed = {'segments', 'style', 'platform', 'brand', 'resolution', 'framing', 'candidate_id', 'title',
                            'editor', 'start', 'end', 'description', 'cta', 'remove_ranges', 'cleanup', 'push_in',
