@@ -29,12 +29,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-      - name: Install API 35 and build tools
+      - name: Verify hosted Android SDK and install API 35
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          set -euo pipefail
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          command -v sdkmanager
+          sdkmanager --version
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
       - name: Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:
