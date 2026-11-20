@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- No INTERNET, camera, broad storage, or account permissions required. -->
+    <!-- No INTERNET, camera or broad-storage permission: Chrome Custom Tabs handles remote Studio using browser authentication. -->
     <application
         android:allowBackup="false"
-        android:label="ClipOps Pocket"
+        android:label="ClipOps Studio"
         android:icon="@drawable/clipops_icon"
         android:theme="@style/ClipOpsTheme"
         android:usesCleartextTraffic="false"

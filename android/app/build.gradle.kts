@@ -8,11 +8,11 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.mbm.clipops.pocket"
+        applicationId = "com.mbm.clipops.studio"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0-hybrid"
     }
 
     buildTypes {
@@ -36,5 +36,6 @@ dependencies {
     implementation("androidx.media3:media3-ui:$media3Version")
     implementation("androidx.media3:media3-transformer:$media3Version")
     implementation("androidx.media3:media3-effect:$media3Version")
+    implementation("androidx.browser:browser:1.10.0")
     testImplementation("junit:junit:4.13.2")
 }

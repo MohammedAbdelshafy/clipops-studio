@@ -22,7 +22,7 @@ from free_fallbacks import free_routes
 import clipops_creative_review as creative_review
 import clipops_scene_review
 import studio_delivery
-from studio_preview import cloud_shell_origin
+from studio_preview import cloud_shell_origin, tailnet_origin, tailnet_login
 
 ASSETS = Path(__file__).resolve().parent / 'studio'
 STATIC = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
@@ -69,7 +69,7 @@ def project_view(project, detail):
 class DeskServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port, root, engine, model=None, source_dir=None, cloud_shell=False, web_host=None):
+    def __init__(self, port, root, engine, model=None, source_dir=None, cloud_shell=False, web_host=None, tailnet_host=None, tailnet_user=None):
         self.root = Path(root).expanduser().resolve()
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.engine = engine
@@ -90,7 +90,13 @@ class DeskServer(ThreadingHTTPServer):
         super().__init__(('127.0.0.1', port), DeskHandler)
         self.hosts = {f'127.0.0.1:{self.server_port}', f'localhost:{self.server_port}'}
         try:
-            self.preview_origin = cloud_shell_origin(self.server_port, web_host if web_host is not None else os.environ.get('WEB_HOST', '')) if cloud_shell else None
+            if cloud_shell and (tailnet_host or tailnet_user):
+                raise ValueError('Choose Cloud Shell OR Tailscale Serve, not both')
+            if bool(tailnet_host) != bool(tailnet_user):
+                raise ValueError('Tailscale private mode requires both host and owner login')
+            self.tailnet_user = tailnet_login(tailnet_user) if tailnet_host else None
+            self.preview_origin = (cloud_shell_origin(self.server_port, web_host if web_host is not None else os.environ.get('WEB_HOST', ''))
+                                   if cloud_shell else tailnet_origin(tailnet_host) if tailnet_host else None)
         except ValueError:
             self.server_close()
             raise
@@ -180,6 +186,13 @@ class DeskHandler(BaseHTTPRequestHandler):
         hosts = self.headers.get_all('Host', [])
         if len(hosts) != 1 or hosts[0] not in self.server.hosts:
             raise RequestError(403, 'Use the local Studio address shown at startup.')
+        if self.server.tailnet_user:
+            # Tailscale Serve removes spoofed identity headers before forwarding.
+            # Gate even static GET / so a shared tailnet URL cannot grant a cookie.
+            identities = self.headers.get_all('Tailscale-User-Login', [])
+            if len(identities) != 1 or not secrets.compare_digest(
+                    identities[0].lower(), self.server.tailnet_user):
+                raise RequestError(403, 'Private ClipOps session belongs to a different tailnet user.')
         if self.headers.get('Sec-Fetch-Site') == 'cross-site' and not (path == '/' and self.command == 'GET'):
             raise RequestError(403, 'This route is available only inside Studio.')
         if path in STATIC and self.command in ('GET', 'HEAD'):
@@ -587,13 +600,18 @@ def main():
     parser.add_argument('--open', action='store_true', help='Open the local studio in the default browser')
     parser.add_argument('--model', type=Path, help='Optional local faster-whisper model directory')
     parser.add_argument('--cloud-shell', action='store_true', help='Allow exact account-gated Google Cloud Shell HTTPS preview')
+    parser.add_argument('--tailnet-host', help='Tailscale Serve private hostname: device.tailnet.ts.net')
+    parser.add_argument('--tailnet-user', help='Tailscale owner login forwarded by Serve')
     args = parser.parse_args()
     import pilot
     os.umask(0o077)
-    with DeskServer(args.port, args.root, pilot, model=args.model, source_dir=args.source_dir, cloud_shell=args.cloud_shell) as server:
+    with DeskServer(args.port, args.root, pilot, model=args.model, source_dir=args.source_dir, cloud_shell=args.cloud_shell,
+                    tailnet_host=args.tailnet_host, tailnet_user=args.tailnet_user) as server:
         print(f'ClipOps Studio is ready at http://127.0.0.1:{server.server_port}', flush=True)
         if server.preview_origin:
-            print(f'Android preview (Google sign-in required): {server.preview_origin}', flush=True)
+            print(f'Private Studio HTTPS URL: {server.preview_origin}', flush=True)
+            if server.tailnet_user:
+                print('Require Tailscale Serve owner identity; never use public Funnel.', flush=True)
         if args.open:
             import webbrowser
             opener = threading.Thread(target=webbrowser.open, args=(f'http://127.0.0.1:{server.server_port}',), daemon=True)
