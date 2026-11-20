@@ -1,5 +1,7 @@
 """Regression coverage for private project state, interrupted renders and signed-off delivery."""
 import json
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -74,6 +76,34 @@ class PilotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "named reviewer"):
             pilot.get_media_path(self.root, job, "c01", "export")
         self.assertEqual(pilot.get_project(self.root, job)["candidates"][0]["review"], "pending")
+
+    def test_parallel_browser_previews_wait_and_share_one_conversion(self):
+        job = self.create()
+        with patch.object(pilot.pilot_edit, "render", self.render):
+            pilot.process_project(self.root, job, render_count=1)
+        started, release = Event(), Event()
+
+        def slow_encode(args, **kwargs):
+            started.set()
+            if not release.wait(timeout=3):
+                raise AssertionError("Preview conversion was not released")
+            Path(args[-1]).write_bytes(b"cached private webm")
+            return None
+
+        with patch.object(pilot.subprocess, "run", side_effect=slow_encode) as encode:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                first = pool.submit(pilot.browser_preview, self.root, job, "c01")
+                self.assertTrue(started.wait(timeout=2))
+                second = pool.submit(pilot.browser_preview, self.root, job, "c01")
+                try:
+                    self.assertFalse(second.done(), "Concurrent viewer should wait for cache")
+                finally:
+                    release.set()
+                first_path = first.result(timeout=4)
+                second_path = second.result(timeout=4)
+        self.assertEqual(first_path, second_path)
+        self.assertEqual(first_path.read_bytes(), b"cached private webm")
+        self.assertEqual(encode.call_count, 1)
 
     def test_approved_file_integrity_and_edit_invalidation(self):
         job = self.create()
