@@ -205,6 +205,7 @@ function creativeReview() {
   const hook = pack?.hook_source;
   const quotes = (pack?.quote_bank || []).map(q => '<li><strong>'+clock(q.start)+'–'+clock(q.end)+'</strong> · <span dir="auto">'+escapeText(q.verbatim)+'</span>'+(q.speaker ? ' <small>('+escapeText(q.speaker)+')</small>' : '')+'</li>').join('');
   const warnings = (pack?.warnings || []).map(w => '<li>'+escapeText(w)+'</li>').join('');
+  const skillChecks = (pack?.editorial_skill_review?.checks || []).map(check => '<li><strong>'+escapeText(check.label)+'</strong> · '+escapeText(String(check.status).replace(/_/g, ' '))+'<p class="hint">'+escapeText(check.detail)+'</p></li>').join('');
   const momentMatches = (state.moments?.matches || []).map((m,i) =>
     '<li><strong>'+clock(m.start)+'–'+clock(m.end)+'</strong> · <span dir="auto">'+escapeText(m.verbatim)+'</span>'
     + '<p class="hint">Matched: '+escapeText(m.matched_terms.join(', '))+' · source token match '+escapeText(m.match_score)+'/100 (not viral score)'+'</p>'
@@ -231,6 +232,7 @@ function creativeReview() {
       + (hook ? '<small class="hint">Source: '+clock(hook.start)+'–'+clock(hook.end)+'. Editorial suggestion only.</small>' : '')
       + '<h3>Verbatim quote bank</h3>'+(quotes ? '<ul class="rationale">'+quotes+'</ul>' : '<p class="hint">No suitable quotes found.</p>')
       + '<h3>Manual editorial checks</h3>'+(warnings ? '<ul class="rationale">'+warnings+'</ul>' : '<p class="hint">Still review story, facts, audio and caption quality.</p>')
+      + (pack.editorial_skill_review ? '<section class="skill-evidence"><h3>Editorial skill checks</h3><p class="hint">Offline structural evidence, not a virality score. Visual quality, rights and final output always require human review.</p><ul class="rationale">'+skillChecks+'</ul></section>' : '')
       + (pack.possible_profanity.length ? '<p class="hint">Review words: '+escapeText(pack.possible_profanity.join(', '))+'</p>' : '')
       + '</section>' : '')
     + '<form id="creative-form"><label class="field wide">Preview an edit instruction'
