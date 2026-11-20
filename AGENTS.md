@@ -7,3 +7,7 @@ Run `python -m unittest discover -v`, `node --check studio/app.js` and the exist
 The review desk is loopback-only and single-user. Customer material remains private. Publishing defaults to a dry run and requires rights confirmation plus a specific explicit opt-in. Never equate an upstream platform API submission with confirmed publication.
 
 If a provider, quota or external API fails, use only the existing authorized **offline/manual** fallback routes (`free_fallbacks.py`), not a silent new cloud upload, duplicate dispatch, paid API or external notification. Record status and honor the original privacy/permission boundary.
+
+## Integrated test build reviewers
+
+Use [`agents/RELEASE_SWARM.md`](agents/RELEASE_SWARM.md) for bounded creative, security and reliability reviews and `docs/TRY_CLIPOPS.md` for the exact test-app workflow. The original active PR branches remain independent sources; never silently overwrite their work. Quality agents are review roles, not unattended processes. Packaging and release status require green backend and Chrome browser jobs. Live posting, customer outreach and public hosting remain disabled without separate approval.
