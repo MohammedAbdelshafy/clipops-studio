@@ -2,6 +2,8 @@
 
 # ClipOps Studio
 
+The local video pilot runs from `pilot.py` and the browser review workspace runs from `studio.py`. See [the pilot runbook](PILOT.md) for setup, rendering, editorial sign-off, delivery, and the first authorized long-form test.
+
 > **Repo-state note (2026-10-06):** this checkout ships only the overnight
 > image batch lane — `batch_images.py` (+ `test_batch_images.py`, 34 hermetic
 > tests). The Remotion video-pipeline sections below (`template/`,
