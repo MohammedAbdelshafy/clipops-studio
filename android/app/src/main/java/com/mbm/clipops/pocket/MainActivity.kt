@@ -1,6 +1,8 @@
 package com.mbm.clipops.pocket
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
+import androidx.browser.customtabs.CustomTabsIntent
 import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Color
@@ -53,6 +55,8 @@ class MainActivity : Activity() {
 
     private lateinit var player: ExoPlayer
     private lateinit var preview: PlayerView
+    private lateinit var laptopUrl: EditText
+    private lateinit var cloudUrl: EditText
     private lateinit var startInput: EditText
     private lateinit var endInput: EditText
     private lateinit var format: Spinner
@@ -156,11 +160,41 @@ class MainActivity : Activity() {
         scroller.addView(body)
         setContentView(scroller)
 
-        body.addView(title("CLIPOPS  /  POCKET", 14f, accent, true))
-        body.addView(title("Edit videos on your phone.", 27f, ink, true))
-        body.addView(title("Offline Android beta · no terminals, accounts or uploads.", 13f, muted))
+        body.addView(title("CLIPOPS  /  STUDIO", 14f, accent, true))
+        body.addView(title("Your full editing factory.", 27f, ink, true))
+        body.addView(title("Same desktop Studio on your phone. Choose a private laptop or Cloud Shell engine.", 13f, muted))
+        body.addView(title("01  /  Full Studio · private engines", 18f, ink, true))
+        body.addView(title("LAPTOP · Tailscale Serve / HTTPS", 12f, muted))
+        laptopUrl = endpointField("https://laptop.your-tailnet.ts.net",
+            "studio_laptop_url")
+        body.addView(laptopUrl)
+        body.addView(button("Open FULL Studio on laptop", highlighted = true) {
+            openFullStudio(laptopUrl, HybridEndpoint.Engine.LAPTOP, "studio_laptop_url")
+        })
+        body.addView(title("CLOUD · Google account-gated Cloud Shell preview", 12f, muted))
+        cloudUrl = endpointField("https://8080-...cloudshell.dev",
+            "studio_cloud_url")
+        body.addView(cloudUrl)
+        body.addView(button("Open FULL Studio in private cloud") {
+            openFullStudio(cloudUrl, HybridEndpoint.Engine.CLOUD, "studio_cloud_url")
+        })
+        body.addView(button("Launch Google Cloud Shell setup") {
+            try {
+                CustomTabsIntent.Builder().setShowTitle(true).build()
+                    .launchUrl(this, Uri.parse("https://shell.cloud.google.com/"))
+            } catch (_: ActivityNotFoundException) {
+                setStatus("Install a supported browser to open Google Cloud Shell.")
+            }
+        })
+        body.addView(title(
+            "These open the original full Studio UI and FFmpeg engine in your signed-in browser. " +
+            "Projects stay on the chosen engine; switching does not sync footage or jobs.",
+            12f, muted
+        ))
+        body.addView(title("02  /  Offline Pocket · emergency trim", 18f, ink, true))
+        body.addView(title("No network or AI required. Trim up to 3 minutes on-device.", 12f, muted))
 
-        choose = button("Choose a video from your phone", highlighted = true) { pickVideo() }
+        choose = button("Choose a video from your phone") { pickVideo() }
         body.addView(choose)
         preview = PlayerView(this).apply {
             player = this@MainActivity.player
@@ -170,7 +204,7 @@ class MainActivity : Activity() {
         body.addView(preview, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(228)
         ))
-        body.addView(title("01  /  Cut your clip", 18f, ink, true))
+        body.addView(title("Offline  /  Cut your clip", 18f, ink, true))
 
         startInput = numericField("Start time (seconds)", "0")
         endInput = numericField("End time (seconds)", "0")
@@ -182,7 +216,7 @@ class MainActivity : Activity() {
         body.addView(button("Set END to current playhead") { endInput.setText(formatSeconds(player.currentPosition)) })
         body.addView(button("Preview selected range") { previewSelection() })
 
-        body.addView(title("02  /  Framing", 18f, ink, true))
+        body.addView(title("Offline  /  Framing", 18f, ink, true))
         body.addView(title("Fit keeps all original content. No face tracking yet.", 12f, muted))
         format = Spinner(this)
         val formats = listOf("Original aspect", "Vertical 9:16 · fit", "Square 1:1 · fit")
@@ -192,7 +226,7 @@ class MainActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, dp(52)
         ))
 
-        body.addView(title("03  /  Export", 18f, ink, true))
+        body.addView(title("Offline  /  Export", 18f, ink, true))
         export = button("Export MP4 to Gallery", highlighted = true) { exportClip() }
         body.addView(export)
         cancel = button("Cancel export") { cancelExport() }
@@ -208,14 +242,56 @@ class MainActivity : Activity() {
         status.gravity = Gravity.CENTER_HORIZONTAL
         body.addView(status)
         body.addView(title(
-            "This APK trims and exports video locally. Source-footage ranking, transcript AI, " +
-            "multi-speaker captions, batch operations and 15–20 GB production editing remain " +
-            "in ClipOps Studio desktop. Large phone exports are not yet qualified.",
+            "Offline Pocket does only trim and export. FULL Studio uses the same " +
+            "desktop Python/FFmpeg engine over owner-authenticated private HTTPS. " +
+            "No automatic cloud failover, cross-engine project sync or remote hosting is provisioned.",
             12f, muted
         ))
         cancel.isEnabled = false
         export.isEnabled = false
         share.isEnabled = false
+    }
+
+    private fun endpointField(hint: String, key: String): EditText {
+        return EditText(this).apply {
+            this.hint = hint
+            setText(getPreferences(MODE_PRIVATE).getString(key, "") ?: "")
+            setTextColor(ink)
+            setHintTextColor(muted)
+            textSize = 14f
+            isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            background = rounded(panel)
+            setPadding(dp(14), 0, dp(14), 0)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50)
+            )
+        }
+    }
+
+    private fun openFullStudio(input: EditText, engine: HybridEndpoint.Engine, key: String) {
+        val url = try {
+            HybridEndpoint.validated(input.text.toString(), engine)
+        } catch (error: IllegalArgumentException) {
+            setStatus(error.message ?: "A private HTTPS engine URL is required.")
+            return
+        }
+        // Only clean HTTPS hostnames are persisted; NEVER passwords, cookies,
+        // bearer tokens, signed URLs or transcripts.
+        getPreferences(MODE_PRIVATE).edit().putString(key, url).apply()
+        input.setText(url)
+        try {
+            CustomTabsIntent.Builder()
+                .setShowTitle(true)
+                .setToolbarColor(background)
+                .build()
+                .launchUrl(this, Uri.parse(url))
+            setStatus("Opening full Studio. The chosen private engine must be running.")
+        } catch (_: ActivityNotFoundException) {
+            setStatus("Install Chrome or another browser before opening full Studio.")
+        } catch (_: SecurityException) {
+            setStatus("Your browser cannot open this private Studio URL.")
+        }
     }
 
     private fun numericField(hint: String, value: String): EditText {
