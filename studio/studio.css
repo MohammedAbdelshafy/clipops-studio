@@ -5,6 +5,18 @@
 @media(max-width:640px){.rail{flex-wrap:wrap;gap:6px;padding:11px 13px 5px}.wordmark{font-size:19px}.mark{width:26px;height:26px}.rail nav{width:100%;margin:3px 0 0;justify-content:space-between}.rail nav a{justify-content:center;flex:1;font-size:11px;padding:7px 3px}.rail nav a .icon{display:none}.topbar{height:49px;padding:0 14px}.crumb{font-size:11px;gap:7px}.button,.download{min-height:33px;padding:7px 10px}.topbar .button{font-size:11px}.heading{align-items:flex-start;margin-bottom:16px;flex-wrap:wrap}.heading .actions{justify-content:flex-start}.meta{font-size:11px;margin-top:7px;gap:5px}.meta>span+span:before{margin-right:5px}main{padding:18px 13px 35px}h1{font-size:29px}.studio-grid{grid-template-columns:minmax(0,1fr);gap:12px}.screen{height:clamp(220px,53vh,340px)}.queue{max-height:320px}.panel-head{padding:13px 14px}.monitor-foot{padding:10px 13px}.tabs{padding:0 12px;gap:13px}.tabs button{font-size:11px}.tab-body{padding:14px}.form-grid{gap:11px}.detail-grid{grid-template-columns:1fr}.detail-grid>aside{border:0;border-top:1px solid var(--line);padding:13px 0 0}.list-row{flex-wrap:wrap;gap:8px}.transcript-tools{align-items:flex-start;flex-wrap:wrap}.cue{grid-template-columns:48px minmax(0,1fr) auto;gap:6px}.cue p{font-size:12px}.form-footer small{font-size:11px}.inspector{margin-top:12px}dialog .dialog-head,#dialog-body{padding:14px}#notice{bottom:10px;right:10px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 
+
+.topbar-helpers{display:flex;align-items:center;gap:8px;min-width:0}
+.topbar-helpers .button{white-space:nowrap}
+.fallback-groups{display:grid;gap:15px;margin:17px 0;max-height:60vh;overflow:auto;overscroll-behavior:contain}
+.fallback-group{padding:12px;border:1px solid var(--line);border-radius:10px;background:#f8faf6}
+.fallback-group h3{font-size:13px;margin:0 0 8px}
+.fallback-entry{padding:10px 0;border-top:1px solid var(--line)}
+.fallback-entry>div{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px}
+.fallback-entry>div strong,.fallback-entry>div a{font-size:12px;font-weight:700}
+.fallback-entry>div span{font-size:10px;color:var(--muted)}
+.fallback-entry p{font-size:11px;line-height:1.55;color:var(--muted);margin:5px 0 0}
+@media(max-width:640px){.topbar-helpers{gap:4px}.topbar-helpers .button{font-size:10px;padding:6px 8px}}
 .cut-suggestion { display: flex; gap: 1rem; align-items: center; justify-content: space-between; padding: .7rem 0; }
 .cut-suggestion button { flex: 0 0 auto; }
 #cuts-form .form-footer { margin-top: 1rem; }
