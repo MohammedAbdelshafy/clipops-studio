@@ -2,7 +2,7 @@
 
 **Current scope: supervised local video editing and clipping pilot.** The repository implements private MP4/MOV/MKV/WebM import, optional offline transcription or reviewed timed JSON, clip discovery, edits, FFmpeg rendering, captions, technical QC, and approval-gated MP4/SRT/VTT export. It also retains the independent image-batching lane. It does **not** provide production multi-user accounts, public video hosting, or verified hands-off social publishing.
 
-**Android phone:** [Run in account-restricted Google Cloud Shell](docs/ANDROID_CLOUD_SHELL.md) using `bash START_CLIPOPS_CLOUD_SHELL.sh` after opening the repository in Cloud Shell. This is a session-based private preview, not persistent hosting.
+**Android full Studio app (hybrid beta):** [Private laptop/cloud setup and approval gates](docs/ANDROID_HYBRID_FULL_STUDIO.md). The native Android APK connects to the **same** Studio editor and Python/FFmpeg engine using one-time pairing over private Tailscale Serve HTTPS. The offline Pocket trimmer remains available. No public cloud server is deployed. [Cloud Shell preview](docs/ANDROID_CLOUD_SHELL.md) remains a temporary alternative.
 
 **Desktop release and outstanding work:** [November 20 integration audit](docs/DESKTOP_RELEASE_AUDIT_2026-11-20.md). The desktop app is the primary editing product; the native Android Pocket APK is an intentionally limited companion, not desktop parity.
 
