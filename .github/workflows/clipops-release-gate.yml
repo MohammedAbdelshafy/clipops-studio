@@ -28,12 +28,16 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: '3.11'
+      - name: Install media runtime and caption fonts
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg fontconfig fonts-dejavu-core fonts-liberation
       - name: Validate FFmpeg availability
         run: |
           set -euo pipefail
           command -v ffmpeg
           command -v ffprobe
-          ffmpeg -hide_banner -version | head -n 1
+          ffmpeg -hide_banner -version
       - name: Install local caption layout dependency
         run: python -m pip install -r requirements-pilot.txt
       - name: Run image-batch, video, export and review regressions
