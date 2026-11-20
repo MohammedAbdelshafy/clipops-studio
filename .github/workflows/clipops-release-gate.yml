@@ -28,6 +28,10 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: '3.11'
+      - name: Install FFmpeg and local fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg fontconfig fonts-dejavu-core fonts-liberation
       - name: Validate FFmpeg availability
         run: |
           set -euo pipefail
