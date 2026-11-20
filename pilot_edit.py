@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from fractions import Fraction
 from functools import lru_cache
 import html
+import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -82,16 +84,71 @@ def _local_run(args, *, cwd=None, timeout=90, binary=False):
     return result.stdout if binary else result.stdout.decode("utf-8", "replace")
 
 
-@lru_cache(maxsize=1)
-def _nvenc_available():
-    # Listing encoders only describes the FFmpeg build. Probe an actual frame synthetically.
+# Encoder selection. "auto" probes hardware with a real encoded frame (an FFmpeg
+# encoder listing is not evidence that the GPU can actually use it) and always
+# keeps libx264 CPU as the last resort.
+ENCODERS = ("auto", "cpu", "qsv", "nvenc")
+HARDWARE_ENCODERS = ("nvenc", "qsv")
+_ENCODER_PROBES = {
+    "nvenc": ("h264_nvenc", ["-preset", "p5"]),
+    "qsv": ("h264_qsv", ["-global_quality", os.environ.get("CLIPOPS_QSV_QUALITY", "20")]),
+}
+# Quality settings: NVENC keeps its original CQ=20 VBR behaviour; QSV uses CQP 20
+# to match libx264 CRF 20. QSV quality is tunable via CLIPOPS_QSV_QUALITY.
+_ENCODER_ARGS = {
+    "nvenc": ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "20", "-b:v", "0"],
+    "qsv": ["-c:v", "h264_qsv", "-global_quality", os.environ.get("CLIPOPS_QSV_QUALITY", "20")],
+    "cpu": ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"],
+}
+_ENCODER_LOG = logging.getLogger("clipops.encoder")
+
+
+@lru_cache(maxsize=None)
+def _encoder_available(encoder):
+    """Return True only after a one-frame encode actually succeeds on this GPU."""
+    codec, options = _ENCODER_PROBES[encoder]
     try:
         _local_run(["ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=s=192x128",
-                    "-frames:v", "1", "-c:v", "h264_nvenc", "-preset", "p5", "-f", "null", "-"],
-                   timeout=10)
+                    "-frames:v", "1", "-c:v", codec, *options, "-f", "null", "-"], timeout=15)
     except RuntimeError:
         return False
     return True
+
+
+def _nvenc_available():
+    """Backwards-compatible wrapper around the shared hardware probe."""
+    return _encoder_available("nvenc")
+
+
+def _select_encoder(requested):
+    """Resolve an encoder mode to ffmpeg codec args, a display name and a trace.
+
+    The trace is structured diagnostics: every probe and its outcome is recorded
+    so the desktop app can show why an encoder was chosen or skipped.
+    """
+    if requested not in ENCODERS:
+        raise ValueError("Choose auto, cpu, qsv or nvenc encoder")
+    cpu = _ENCODER_ARGS["cpu"]
+    if requested == "cpu":
+        return list(cpu), "libx264", [{"mode": "cpu", "status": "requested"}]
+    # Measured on this host (2026-11-20, 10 s 720p end-to-end render with six
+    # caption segments): libx264 8.48 s, h264_qsv 10.88 s. Auto therefore keeps
+    # the original NVENC-then-CPU policy so a working QSV probe cannot silently
+    # slow every job. Set CLIPOPS_AUTO_QSV=1 to add QSV to auto after measuring
+    # your own workload; explicit encoder="qsv" always works without the opt-in.
+    auto_qsv = os.environ.get("CLIPOPS_AUTO_QSV", "") == "1"
+    if requested == "auto":
+        candidates = ("nvenc", "qsv") if auto_qsv else ("nvenc",)
+    else:
+        candidates = (requested,)
+    trace = []
+    for name in candidates:
+        ok = _encoder_available(name)
+        trace.append({"mode": name, "status": "available" if ok else "unavailable"})
+        if ok:
+            return list(_ENCODER_ARGS[name]), name, trace
+    trace.append({"mode": "cpu", "status": "fallback"})
+    return list(cpu), "libx264", trace
 
 
 def _brand(brand, style):
@@ -687,8 +744,8 @@ def render(source: Path, output: Path, start: float, end: float, segments: list,
         raise ValueError("Choose a new MP4 output distinct from the source")
     if style not in STYLES or platform not in PLATFORMS or resolution not in (720, 1080, 2160):
         raise ValueError("Unsupported style, platform or resolution")
-    if encoder not in ("auto", "cpu"):
-        raise ValueError("Choose auto hardware detection or the CPU encoder")
+    if encoder not in ENCODERS:
+        raise ValueError("Choose auto, cpu, qsv or nvenc encoder")
     if type(push_in) is not bool or type(cleanup) is not bool:
         raise ValueError("push_in and cleanup must be booleans")
     profile = STYLES[style]
@@ -782,9 +839,10 @@ def render(source: Path, output: Path, start: float, end: float, segments: list,
         if audio:
             cmd += ["-map", "[outa]", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k"]
         cmd += ["-map_metadata", "-1", "-map_chapters", "-1", "-t", str(length), "-threads", "2"]
-        cpu = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
-        nvenc = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "20", "-b:v", "0"]
-        encoding = nvenc if encoder == "auto" and _nvenc_available() else cpu
+        cpu = _ENCODER_ARGS["cpu"]
+        encoding, used_encoder, trace = _select_encoder(encoder)
+        _ENCODER_LOG.info("encoder_selection=%s", json.dumps(
+            {"requested": encoder, "chosen": used_encoder, "probes": trace}))
         finish = ["-pix_fmt", "yuv420p", "-movflags", "+faststart", "render.mp4"]
         timeout = max(120, round(length * (15 if resolution == 2160 else 8)))
         try:
@@ -792,6 +850,9 @@ def render(source: Path, output: Path, start: float, end: float, segments: list,
         except RuntimeError:
             if encoding == cpu:
                 raise
+            _ENCODER_LOG.warning("encoder_fallback from=%s to=libx264", used_encoder)
+            trace.append({"mode": used_encoder, "status": "runtime_failed"})
+            used_encoder = "libx264"
             encoding = cpu
             _local_run(cmd + encoding + finish, cwd=directory, timeout=timeout)
         # Publish the media last; the project layer atomically promotes a fully QC'd artifact directory.
@@ -805,7 +866,8 @@ def render(source: Path, output: Path, start: float, end: float, segments: list,
             "dimensions": [width, height], "source_dimensions": [source_width, source_height],
             "upscaled": factor > 1.001, "foreground_scale": round(factor, 4), "framing": mode,
             "framing_reason": evidence, "requested_framing": framing, "captions": captions,
-            "caption_mode": sorted({cue["timing"] for cue in captions}), "encoder": encoding[1],
+            "caption_mode": sorted({cue["timing"] for cue in captions}), "encoder": used_encoder,
+            "encoder_requested": encoder, "encoder_probes": trace,
             "retained_source_ranges": ranges, "has_audio": audio, "push_in": push_in,
             "punch_ins": punch_plan,
             "cutaway_count": len(cutaways or []), "sound_accent_count": len(sound_accents or []),

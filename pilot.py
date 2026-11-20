@@ -410,7 +410,7 @@ def edit_project(root, job_id, **updates):
     directory = project_dir(root, job_id)
     fields = {"segments", "style", "platform", "brand", "framing", "resolution", "speaker_positions",
               "candidate_id", "title", "description", "cta", "start", "end", "editor", "audience", "rerank",
-              "cleanup", "push_in", "remove_ranges", "punch_ins"}
+              "cleanup", "push_in", "remove_ranges", "punch_ins", "encoder"}
     if set(updates) - fields:
         raise ValueError("Unknown project edit")
     with lock(directory, ".worker"):
@@ -423,6 +423,11 @@ def edit_project(root, job_id, **updates):
             if type(value) is not bool:
                 raise ValueError("Audio cleanup and gentle push-in must be true or false")
             new[key] = value
+        if "encoder" in updates:
+            value = updates["encoder"]
+            if value not in pilot_edit.ENCODERS:
+                raise ValueError("Choose auto, cpu, qsv or nvenc encoder")
+            new["encoder"] = value
         changed = any(state.get(k, False) != value for k, value in new.items())
         state.update(new)
         segments_changed = False
@@ -683,7 +688,7 @@ def render_candidate(directory, state, rows, clip):
                                      speaker_positions=state["speaker_positions"], cleanup=state.get("cleanup", False),
                                      remove_ranges=clip.get("remove_ranges"),
                                      push_in=state.get("push_in", False) and not clip.get("punch_ins"),
-                                     punch_ins=clip.get("punch_ins"))
+                                     punch_ins=clip.get("punch_ins"), encoder=state.get("encoder", "auto"))
         fingerprints = [(other.get("qc") or {}).get("evidence", {}).get("decoded_media_sha256")
                         for other in state["candidates"] if other is not clip and other["review"] != "rejected"
                         and (other.get("qc") or {}).get("passed")]
