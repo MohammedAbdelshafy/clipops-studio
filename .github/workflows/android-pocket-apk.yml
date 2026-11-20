@@ -1,4 +1,4 @@
-name: ClipOps Pocket Android APK
+name: ClipOps Studio Android APK
 
 on:
   pull_request:
@@ -29,6 +29,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Python 3.11 for shared desktop intelligence
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify desktop/mobile intelligence code parity
+        run: |
+          cmp pilot_intelligence.py android/app/src/main/python/pilot_intelligence.py
+          cmp clipops_creative_review.py android/app/src/main/python/clipops_creative_review.py
+          python -m unittest -v test_pilot_intelligence.py test_clipops_creative_review.py
       - name: Verify hosted Android SDK and install API 35
         run: |
           set -euo pipefail
@@ -54,7 +63,7 @@ jobs:
       - name: Upload APK for direct Android installation
         uses: actions/upload-artifact@v4
         with:
-          name: ClipOps-Pocket-APK
+          name: ClipOps-Studio-Android-APK
           path: |
             android/app/build/outputs/apk/debug/app-debug.apk
             android/app/build/outputs/apk/debug/SHA256SUMS.txt
