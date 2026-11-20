@@ -1,0 +1,107 @@
+--- baseline/studio_drive_local.py
++++ review/studio_drive_local.py
+@@ -22,9 +22,14 @@
+ 
+ 
+ def secure_root(root: str | Path) -> Path:
+-    p = Path(root).expanduser().resolve()
++    requested = Path(root).expanduser().absolute()
++    # Resolving first hides a symlink at the root itself. Reject the caller's
++    # symlink before resolving; the OAuth token must stay at the chosen path.
++    if requested.is_symlink():
++        raise ValueError("Studio root must not be a symbolic link")
++    p = requested.resolve()
+     p.mkdir(parents=True, exist_ok=True, mode=0o700)
+-    if p.is_symlink() or not p.is_dir():
++    if not p.is_dir():
+         raise ValueError("Studio root must be a private local directory")
+     return p
+ 
+@@ -89,9 +94,18 @@
+     raise ValueError("The Google JSON is not a Web or Desktop OAuth client")
+ 
+ 
+-def connect(root: str | Path, client_json: str | Path, *, web_port: int = 8766) -> None:
++def connect(root: str | Path, client_json: str | Path, *, web_port: int = 8766,
++            open_browser: bool = True) -> None:
+     """Run an explicit local-browser consent; never send secrets to client JavaScript."""
+     source, client_type, _redirect = oauth_configuration(client_json, web_port=web_port)
++    # Cloud Shell runs remotely. Redirecting an Android/desktop browser to
++    # localhost will reach that device, not the remote Cloud Shell process.
++    # This CLI implements local loopback OAuth only; never instruct users to
++    # tunnel the callback publicly or disable the existing auth boundary.
++    if os.environ.get("WEB_HOST"):
++        raise RuntimeError("Cloud Shell cannot use this localhost OAuth callback. "
++                           "Run connect on the same local workstation/browser; "
++                           "a separate authenticated HTTPS callback is required for Cloud Shell.")
+     try:
+         from google_auth_oauthlib.flow import InstalledAppFlow
+     except ImportError as exc:
+@@ -101,7 +115,7 @@
+     # unlike a Desktop client, an arbitrary ephemeral port is not valid.
+     flow = InstalledAppFlow.from_client_secrets_file(
+         str(source), scopes=[DRIVE_SCOPE], autogenerate_code_verifier=True)
+-    server_options = {"host": "localhost", "port": web_port, "open_browser": True,
++    server_options = {"host": "localhost", "port": web_port, "open_browser": open_browser,
+                       "authorization_prompt_message":
+                       "Open this URL to authorize ClipOps Google Drive: {url}"}
+     if client_type == "installed":
+@@ -229,6 +243,10 @@
+     auth = sub.add_parser("connect", help="Ask for Google Drive authorization through your browser")
+     auth.add_argument("--client-secrets", required=True, help="Private Google OAuth JSON (web or installed)")
+     auth.add_argument("--oauth-port", type=int, default=8766, help="Fixed Google Web OAuth callback port; default 8766")
++    auth.add_argument("--no-browser", action="store_true", help="Print the consent URL instead of opening a browser (WSL2)")
++    check = sub.add_parser("check-oauth", help="Validate your local OAuth JSON and redirect URI without signing in")
++    check.add_argument("--client-secrets", required=True, help="Local OAuth JSON; values are never printed")
++    check.add_argument("--oauth-port", type=int, default=8766, help="Expected registered callback port")
+     prev = sub.add_parser("preview", help="List downloadable videos from an authorized folder")
+     prev.add_argument("folder_url")
+     start = sub.add_parser("start", help="Import one explicitly selected video and create a ClipOps project")
+@@ -247,7 +265,16 @@
+     resume.add_argument("--process", action="store_true")
+     args = parser.parse_args()
+     if args.command == "connect":
+-        connect(args.root, args.client_secrets, web_port=args.oauth_port)
++        connect(args.root, args.client_secrets, web_port=args.oauth_port,
++                open_browser=not args.no_browser)
++        return
++    if args.command == "check-oauth":
++        _, client_type, redirect_uri = oauth_configuration(
++            args.client_secrets, web_port=args.oauth_port)
++        print("OAuth configuration valid:", client_type)
++        if redirect_uri:
++            print("Registered callback:", redirect_uri)
++        print("Credentials and media were not accessed.")
+         return
+     bridge, store = make_bridge(args.root)
+     if args.command == "preview":
+--- baseline/studio_drive_reader.py
++++ review/studio_drive_reader.py
+@@ -207,8 +207,11 @@
+         raise DriveImportError("Invalid or deleted Google Drive item")
+     # Our ingest core enforces filenames and extensions too. Do not sanitize
+     # silently: a dangerous or ambiguous remote filename must be renamed by user.
+-    if Path(name).name != name or "\\" in name or "\x00" in name:
+-        raise DriveImportError("Unsafe Google Drive media filename")
++    # Match Studio's import-name contract before creating a durable upload
++    # checkpoint. This also rejects CR/LF injection in local logs and reports.
++    if (not 1 <= len(name) <= 180 or Path(name).name != name or
++            "\\" in name or any(ord(character) < 32 for character in name)):
++        raise DriveImportError("Invalid Google Drive media filename")
+     if Path(name).suffix.lower() not in ALLOWED_EXTENSIONS or mime not in _MEDIA_MIMES:
+         raise DriveImportError("Google Drive item is not a supported video file")
+     if require_parent is not None and require_parent not in value.get("parents", []):
+--- baseline/README_DRIVE_PILOT.md
++++ review/README_DRIVE_PILOT.md
+@@ -89,3 +89,11 @@
+ 5. Use `preview` and `start` as before. The separate ClipOps web UI folder-picker remains a follow-up integration, not claimed complete here.
+ 
+ No GitHub changes, public deployment, emails, Drive writes, or real OAuth requests were performed to produce this package.
++
++## November 20 hardening addendum
++
++For the latest reconciled GitHub version, exact test evidence and requirements coverage, see `RELEASE_AUDIT_2026-11-20.md` and `RUN_ON_YOUR_PC.md`.
++
++New local CLI features: `check-oauth` validates your saved Google Web client without signing in, and `connect --no-browser` prints the Google consent URL for use in the browser on the **same** workstation (particularly WSL2). The pilot explicitly rejects the `localhost` callback when executed inside remote Cloud Shell. For Android phone tests, use the existing merged Cloud Shell preview of ClipOps with a small manually uploaded rights-cleared video; Drive OAuth still needs a separate secure HTTPS callback design there.
++
++The 28 offline tests prove neither a completed Google OAuth exchange nor the Studio browser UI integration.

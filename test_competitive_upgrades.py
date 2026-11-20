@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
+import clipops_compat
 import clipops_creative_review as creative
 import clipops_scene_review as scenes
 
@@ -79,7 +80,12 @@ class SceneAnalysisTests(unittest.TestCase):
                 scenes.scene_review(path,0,3,threshold=.99)
             with self.assertRaises(ValueError):
                 scenes.scene_review(Path(tmp)/'missing.mp4',0,3)
-            (Path(tmp)/'alias.mp4').symlink_to(path)
+            try:
+                (Path(tmp)/'alias.mp4').symlink_to(path)
+            except OSError as exc:
+                if getattr(exc, 'winerror', None) in (1, 1314, 1316):
+                    self.skipTest('Windows symlink creation needs Administrator or Developer Mode')
+                raise
             with self.assertRaises(ValueError):
                 scenes.scene_review(Path(tmp)/'alias.mp4',0,3)
 

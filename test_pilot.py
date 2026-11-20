@@ -1,5 +1,6 @@
 """Regression coverage for private project state, interrupted renders and signed-off delivery."""
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from pathlib import Path
@@ -8,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 import pilot
+from clipops_compat import is_private_path
 
 
 class PilotTests(unittest.TestCase):
@@ -54,7 +56,10 @@ class PilotTests(unittest.TestCase):
             pilot.get_project(self.root, "../elsewhere")
         project = self.create()
         self.assertEqual(pilot.list_projects(self.root)[0]["id"], project)
-        self.assertEqual(self.root.stat().st_mode & 0o777, 0o700)
+        if os.name == "nt":
+            self.assertTrue(is_private_path(self.root, directory=True))
+        else:
+            self.assertEqual(self.root.stat().st_mode & 0o777, 0o700)
         self.assertNotIn("model_path", pilot.get_project(self.root, project))
 
     def test_webm_preview_is_cached_private_and_does_not_approve_delivery(self):
@@ -69,7 +74,11 @@ class PilotTests(unittest.TestCase):
         with patch.object(pilot.subprocess, "run", side_effect=fake_encode) as run:
             path = pilot.browser_preview(self.root, job, "c01")
             self.assertEqual(path.read_bytes(), b"local-private-webm-test")
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            # Windows has no mode bits: assert the effective ACL instead.
+            if os.name == "nt":
+                self.assertTrue(is_private_path(path))
+            else:
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(path.name, "preview.webm")
             self.assertEqual(pilot.browser_preview(self.root, job, "c01"), path)
             self.assertEqual(run.call_count, 1)

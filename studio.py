@@ -60,7 +60,8 @@ def project_view(project, detail):
             clip['qc'] = {k: quality[k] for k in ('passed', 'checks', 'manual_review', 'dimensions') if k in quality} or None
             rendering = source.get('render') or {}
             clip['render'] = {k: rendering[k] for k in ('duration', 'framing', 'framing_reason', 'dimensions',
-                                                        'upscaled', 'encoder', 'retained_source_ranges') if k in rendering}
+                                                        'upscaled', 'encoder', 'encoder_requested',
+                                                        'encoder_probes', 'retained_source_ranges') if k in rendering}
             clips.append(clip)
         result['candidates'] = clips
     return result
@@ -529,7 +530,7 @@ class DeskHandler(BaseHTTPRequestHandler):
             if action == 'edit':
                 allowed = {'segments', 'style', 'platform', 'brand', 'resolution', 'framing', 'candidate_id', 'title',
                            'editor', 'start', 'end', 'description', 'cta', 'remove_ranges', 'cleanup', 'push_in',
-                           'speaker_positions', 'audience', 'punch_ins'}
+                           'speaker_positions', 'audience', 'punch_ins', 'encoder'}
                 if not data or set(data) - allowed:
                     raise RequestError(400, 'Unknown or missing editable field.')
                 engine.edit_project(root, project_id, **data)

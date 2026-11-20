@@ -5,14 +5,13 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import fcntl
+from clipops_compat import LEASE_FLAGS, NOFOLLOW, NONBLOCK, is_private_path, resource, sync_directory as _sync_directory, exclusive as _exclusive_lock
 import hashlib
 import json
 import math
 import os
 from pathlib import Path
 import re
-import resource
 import shutil
 import stat
 import subprocess
@@ -69,7 +68,7 @@ def private_root(root):
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     if path.is_symlink() or not path.is_dir():
         raise ValueError("Choose a private local directory for project storage")
-    if path.stat().st_mode & 0o077:
+    if not is_private_path(path, directory=True):
         raise ValueError("Project storage must be private to your OS account (chmod 700)")
     return path.resolve()
 
@@ -86,13 +85,13 @@ def project_dir(root, job_id):
 @contextmanager
 def lock(directory, filename, *, wait=False):
     """The OS releases this nonblocking lock even if a worker is killed."""
-    fd = os.open(directory / filename, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    fd = os.open(directory / filename, LEASE_FLAGS, 0o600)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with _exclusive_lock(fd, wait=wait):
+                yield
         except BlockingIOError as exc:
             raise ValueError("A worker is busy. Retry when the current operation finishes.") from exc
-        yield
     finally:
         os.close(fd)
 
@@ -115,11 +114,7 @@ def save_json(path, data):
 
 
 def sync_directory(path):
-    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+    _sync_directory(path)
 
 
 def load_json(path, maximum=None):
@@ -164,7 +159,7 @@ def copy_media(source, dest):
 
 
 def file_identity(path):
-    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    flags = os.O_RDONLY | NOFOLLOW | NONBLOCK
     fd = os.open(path, flags)
     try:
         info = os.fstat(fd)
@@ -415,7 +410,7 @@ def edit_project(root, job_id, **updates):
     directory = project_dir(root, job_id)
     fields = {"segments", "style", "platform", "brand", "framing", "resolution", "speaker_positions",
               "candidate_id", "title", "description", "cta", "start", "end", "editor", "audience", "rerank",
-              "cleanup", "push_in", "remove_ranges", "punch_ins"}
+              "cleanup", "push_in", "remove_ranges", "punch_ins", "encoder"}
     if set(updates) - fields:
         raise ValueError("Unknown project edit")
     with lock(directory, ".worker"):
@@ -428,6 +423,11 @@ def edit_project(root, job_id, **updates):
             if type(value) is not bool:
                 raise ValueError("Audio cleanup and gentle push-in must be true or false")
             new[key] = value
+        if "encoder" in updates:
+            value = updates["encoder"]
+            if value not in pilot_edit.ENCODERS:
+                raise ValueError("Choose auto, cpu, qsv or nvenc encoder")
+            new["encoder"] = value
         changed = any(state.get(k, False) != value for k, value in new.items())
         state.update(new)
         segments_changed = False
@@ -688,7 +688,7 @@ def render_candidate(directory, state, rows, clip):
                                      speaker_positions=state["speaker_positions"], cleanup=state.get("cleanup", False),
                                      remove_ranges=clip.get("remove_ranges"),
                                      push_in=state.get("push_in", False) and not clip.get("punch_ins"),
-                                     punch_ins=clip.get("punch_ins"))
+                                     punch_ins=clip.get("punch_ins"), encoder=state.get("encoder", "auto"))
         fingerprints = [(other.get("qc") or {}).get("evidence", {}).get("decoded_media_sha256")
                         for other in state["candidates"] if other is not clip and other["review"] != "rejected"
                         and (other.get("qc") or {}).get("passed")]
@@ -820,9 +820,15 @@ def purge_project(root, job_id):
     with lock(directory, ".worker"):
         if load_json(directory / PROJECT_FILE).get("id") != job_id:
             raise ValueError("Project receipt does not match its storage directory")
-        trash = directory.with_name(".purge-" + uuid4().hex)
+    # Windows refuses to rename a directory while one of its files is open, so
+    # the lease must be released first. The rename is atomic, so losing a race
+    # against another purge simply means there is nothing left to remove.
+    trash = directory.with_name(".purge-" + uuid4().hex)
+    try:
         directory.rename(trash)
-    shutil.rmtree(trash)
+        shutil.rmtree(trash)
+    except FileNotFoundError:
+        return
 
 
 def run_report(project):
