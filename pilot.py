@@ -5,14 +5,13 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import fcntl
+from clipops_compat import LEASE_FLAGS, NOFOLLOW, NONBLOCK, is_private_path, resource, sync_directory as _sync_directory, exclusive as _exclusive_lock
 import hashlib
 import json
 import math
 import os
 from pathlib import Path
 import re
-import resource
 import shutil
 import stat
 import subprocess
@@ -69,7 +68,7 @@ def private_root(root):
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     if path.is_symlink() or not path.is_dir():
         raise ValueError("Choose a private local directory for project storage")
-    if path.stat().st_mode & 0o077:
+    if not is_private_path(path, directory=True):
         raise ValueError("Project storage must be private to your OS account (chmod 700)")
     return path.resolve()
 
@@ -86,13 +85,13 @@ def project_dir(root, job_id):
 @contextmanager
 def lock(directory, filename, *, wait=False):
     """The OS releases this nonblocking lock even if a worker is killed."""
-    fd = os.open(directory / filename, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    fd = os.open(directory / filename, LEASE_FLAGS, 0o600)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with _exclusive_lock(fd, wait=wait):
+                yield
         except BlockingIOError as exc:
             raise ValueError("A worker is busy. Retry when the current operation finishes.") from exc
-        yield
     finally:
         os.close(fd)
 
@@ -115,11 +114,7 @@ def save_json(path, data):
 
 
 def sync_directory(path):
-    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+    _sync_directory(path)
 
 
 def load_json(path, maximum=None):
@@ -164,7 +159,7 @@ def copy_media(source, dest):
 
 
 def file_identity(path):
-    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    flags = os.O_RDONLY | NOFOLLOW | NONBLOCK
     fd = os.open(path, flags)
     try:
         info = os.fstat(fd)

@@ -184,6 +184,12 @@ def _phrases(rows, max_words):
 
 @lru_cache(maxsize=12)
 def _font_path(family):
+    if os.name == "nt":
+        from clipops_compat import font_path
+        path = font_path(family)
+        if path and Path(path).is_file():
+            return path
+        raise RuntimeError("A local caption font is required")
     path = _local_run(["fc-match", "--format=%{file}", family + ":style=Bold"]).strip()
     if not path or not Path(path).is_file():
         raise RuntimeError("A local caption font and Fontconfig are required")
