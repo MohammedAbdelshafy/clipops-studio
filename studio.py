@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 from studio_uploads import UploadStore, UploadError, TUS, EMPTY_RECEIPT, expires, checksum
 from free_fallbacks import free_routes
 import clipops_creative_review as creative_review
+import clipops_skill_checks
 import clipops_scene_review
 import studio_delivery
 from studio_preview import cloud_shell_origin, tailnet_origin, tailnet_login
@@ -279,7 +280,10 @@ class DeskHandler(BaseHTTPRequestHandler):
             if clip is None:
                 raise RequestError(404, 'Candidate not found.')
             rows = creative_review.clean_segments(project.get('segments', []))
-            self._json(creative_review.review_candidate(rows, clip))
+            creative_pack = creative_review.review_candidate(rows, clip)
+            creative_pack['editorial_skill_review'] = clipops_skill_checks.review_skill_checks(
+                rows, creative_pack, project.get('source', {}).get('duration'))
+            self._json(creative_pack)
         elif match := re.fullmatch(rf'/api/projects/({ID})/approved-delivery.zip', path):
             if self.command != 'GET':
                 raise RequestError(405, 'Approved ZIP downloads require GET.')
