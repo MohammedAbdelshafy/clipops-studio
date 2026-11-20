@@ -18,6 +18,7 @@ import threading
 from urllib.parse import urlsplit
 
 from studio_uploads import UploadStore, UploadError, TUS, EMPTY_RECEIPT, expires, checksum
+from free_fallbacks import free_routes
 
 ASSETS = Path(__file__).resolve().parent / 'studio'
 STATIC = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
@@ -210,6 +211,8 @@ class DeskHandler(BaseHTTPRequestHandler):
         elif path == '/api/session':
             self._json({'csrf': self.server.csrf, 'local_model': bool(self.server.model), 'upload_limit': self.server.upload_store.capacity, 'chunk_bytes': self.server.upload_store.chunk,
                         'local_sources': bool(self.server.source_dir)})
+        elif path == '/api/fallbacks':
+            self._json(free_routes(local_model=self.server.model is not None))
         elif path == '/api/local-sources' and self.server.source_dir:
             from itertools import islice
 
@@ -222,9 +225,12 @@ class DeskHandler(BaseHTTPRequestHandler):
             self._json(self.server.details(match[1]))
         elif match := re.fullmatch(rf'/api/projects/({ID})/({CLIP})/cuts', path):
             self._json(self.server.engine.suggest_cuts(self.server.root, match[1], match[2]))
-        elif match := re.fullmatch(rf'/media/({ID})/(source|({CLIP})/(preview|export|srt|vtt))', path):
+        elif match := re.fullmatch(rf'/media/({ID})/(source|({CLIP})/(preview|webm|export|srt|vtt))', path):
             kind = match[4] or 'source'
-            file = self.server.engine.get_media_path(self.server.root, match[1], clip_id=match[3], kind=kind)
+            if kind == 'webm':
+                file = self.server.engine.browser_preview(self.server.root, match[1], match[3])
+            else:
+                file = self.server.engine.get_media_path(self.server.root, match[1], clip_id=match[3], kind=kind)
             self._file(Path(file), kind, match[3])
         else:
             raise RequestError(404, 'Route not found.')

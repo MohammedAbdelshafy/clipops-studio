@@ -47,7 +47,7 @@ function mediaUrl(kind, clip=current()) {
 function notifyError(error) {
   const box = $('#dialog[open] .error-banner');
   if (box) box.textContent = error.message;
-  else notice(error.message, true);
+  else notice(error.message + ' · See Free fallbacks in the top bar.', true);
 }
 function openDialog(title, html) {
   $('#dialog-title').textContent = title;
@@ -55,6 +55,23 @@ function openDialog(title, html) {
   if (!$('#dialog').open) $('#dialog').showModal();
 }
 function closeDialog() { $('#dialog').close(); }
+async function showFreeFallbacks() {
+  const payload = await api('/api/fallbacks');
+  if (!Array.isArray(payload.routes)) throw new Error('Fallback directory unavailable.');
+  const groups = {intake:'Large video intake', speech:'Transcription', editing:'Editing', assets:'Artwork', distribution:'Publishing'};
+  const body = Object.entries(groups).map(([category,label]) => {
+    const entries = payload.routes.filter(r => r.workflow === category).map(r => {
+      const title = typeof r.url === 'string' && r.url.startsWith('https://')
+        ? '<a href="' + escapeText(r.url) + '" target="_blank" rel="noopener noreferrer">' + escapeText(r.title) + '</a>'
+        : '<strong>' + escapeText(r.title) + '</strong>';
+      const status = r.mode === 'local_optional' ? (r.available_here ? 'Configured here' : 'Needs local setup')
+        : r.mode === 'manual_external' ? 'External, manual only' : 'Built into ClipOps';
+      return '<div class="fallback-entry"><div>' + title + '<span>' + escapeText(status) + '</span></div><p>' + escapeText(r.description) + '</p></div>';
+    }).join('');
+    return '<section class="fallback-group"><h3>' + escapeText(label) + '</h3>' + entries + '</section>';
+  }).join('');
+  openDialog('Free fallback tools', '<p class="hint">Choose an offline or manually opened tool when an optional API is unavailable. Nothing automatically receives your footage.</p><div class="fallback-groups">' + body + '</div><p class="hint">' + escapeText(payload.policy) + '</p>');
+}
 function formField(label, control, wide=false) { return `<label class="field ${wide ? 'wide' : ''}">${label}${control}</label>`; }
 function button(action, label, cls='', disabled=false) { return `<button type="button" class="button ${cls}" data-action="${action}" ${disabled ? 'disabled' : ''}>${label}</button>`; }
 function titleBar(text, subtitle, buttons='') {
@@ -200,7 +217,16 @@ function drawTab() {
   area.innerHTML = ({details,captions,settings,review})[state.tab]();
 }
 function motionAllowed() {
-  return !window.matchMedia('(prefers-reduced-motion: reduce)').matches && !navigator.connection?.saveData;
+  // Multiple simultaneous HD video decoders on compact devices impair
+  // performance and may exhaust codec resources. Main video stays enabled.
+  return !window.matchMedia('(prefers-reduced-motion: reduce)').matches &&
+    !window.matchMedia('(max-width: 640px)').matches && !navigator.connection?.saveData;
+}
+function needsWebmReview(video) {
+  // The local final deliverable stays H.264/AAC MP4. Only the visual preview
+  // falls back if the browser advertises no support for those codecs.
+  return !video.canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"')
+    && Boolean(video.canPlayType('video/webm; codecs="vp8, opus"'));
 }
 function syncAmbient() {
   const stage = document.querySelector('.cinema-stage');
@@ -212,7 +238,7 @@ function syncAmbient() {
   if (enabled && !background) {
     const video = document.createElement('video');
     video.className = 'ambient-preview';
-    video.src = mediaUrl('preview',clip) + '?v=' + state.version;
+    video.src = document.querySelector('#video')?.src || (mediaUrl('preview',clip) + '?v=' + state.version);
     video.muted = true;
     video.loop = true;
     video.autoplay = true;
@@ -230,7 +256,7 @@ function syncAmbient() {
   toggle.setAttribute('aria-pressed',String(enabled));
   toggle.textContent = 'Ambient video: ' + (enabled ? 'On' : 'Off');
   toggle.title = !clip?.rendered ? 'Render a clip to preview its ambient background.' :
-    !motionAllowed() ? 'Motion is disabled by your reduced-motion or data-saver preference.' : '';
+    !motionAllowed() ? 'Ambient motion is disabled on compact screens or by reduced-motion/data-saver preferences.' : '';
 }
 function draw() {
   setNav();
@@ -246,6 +272,9 @@ function bindVideo(requestedTime=null, fullSource=false) {
   if (!video) return;
   const c = current();
   const rendered = c?.rendered && !state.sourceView && !fullSource;
+  if (rendered && needsWebmReview(video)) {
+    video.src = mediaUrl('webm', c) + '?v=' + state.version;
+  }
   const start = 0;
   const end = rendered ? c.render?.duration ?? c.end - c.start : state.project.source.duration;
   const seek = requestedTime ?? (rendered ? 0 : (c?.start || 0));
@@ -596,6 +625,7 @@ document.addEventListener('click', async event => {
       video.play().catch(notifyError); return;
     }
     switch (node.dataset.action) {
+      case 'fallbacks': await showFreeFallbacks(); break;
       case 'ambient':
         state.ambient = !state.ambient;
         try { localStorage.setItem('clipops-ambient-video',state.ambient ? 'on' : 'off'); }
@@ -643,6 +673,7 @@ document.addEventListener('change', event => {
 });
 window.addEventListener('hashchange',() => route().catch(notifyError));
 window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change',syncAmbient);
+window.matchMedia('(max-width: 640px)').addEventListener('change',syncAmbient);
 document.addEventListener('visibilitychange', () => {
   const background = document.querySelector('.ambient-preview');
   if (!background) return;

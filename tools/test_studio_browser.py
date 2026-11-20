@@ -18,19 +18,29 @@ from studio import DeskServer
 
 
 def seek_preview(page, seconds):
-    # Execute as a callable through the locator instead of altering the desk's CSP.
-    assert page.locator('#video').evaluate('''async (video, seconds) => {
-        const deadline = performance.now() + 10000;
-        while (performance.now() < deadline && video.readyState === 0) {
+    """Verify a decoded seek and expose the media element's real state on failure."""
+    # Execute through the locator, not by weakening the application's CSP.
+    diagnostic = page.locator('#video').evaluate('''async (video, seconds) => {
+        const deadline = performance.now() + 20000;
+        video.pause();
+        while (performance.now() < deadline && video.readyState === 0 && !video.error) {
             await new Promise(resolve => setTimeout(resolve, 50));
         }
-        video.currentTime = seconds;
-        while (performance.now() < deadline) {
-            if (video.readyState >= 2 && Math.abs(video.currentTime - seconds) < .12) return true;
+        if (!video.error && video.readyState > 0) video.currentTime = seconds;
+        while (performance.now() < deadline && !video.error) {
+            if (!video.seeking && video.readyState >= 2 &&
+                Math.abs(video.currentTime - seconds) < .12) return {passed: true};
             await new Promise(resolve => setTimeout(resolve, 50));
         }
-        return false;
+        return {passed: false, src: new URL(video.currentSrc || video.src).pathname,
+          readyState: video.readyState, networkState: video.networkState,
+          errorCode: video.error?.code ?? null, errorMessage: video.error?.message ?? '',
+          duration: video.duration, currentTime: video.currentTime,
+          seekable: video.seekable.length ? [video.seekable.start(0), video.seekable.end(video.seekable.length-1)] : [],
+          buffered: video.buffered.length ? [video.buffered.start(0), video.buffered.end(video.buffered.length-1)] : [],
+          seeking: video.seeking, paused: video.paused};
     }''', seconds)
+    assert diagnostic["passed"], f"Foreground browser preview failed to decode/seek: {diagnostic}"
 
 
 def main():
@@ -44,7 +54,11 @@ def main():
         server.upload_store.chunk = 256 * 1024
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        browser = playwright.chromium.launch(executable_path=args.chromium, headless=True, args=['--disable-dev-shm-usage'])
+        executable = args.chromium if Path(args.chromium).is_file() else None
+        # Branded Chrome includes the H.264/AAC codecs used in actual ClipOps MP4 exports.
+        # Playwright's bundled Chromium is not a reliable H.264 decoder on Linux.
+        browser_options = {'executable_path': executable} if executable else {'channel': 'chrome'}
+        browser = playwright.chromium.launch(**browser_options, headless=True, args=['--disable-dev-shm-usage'])
         try:
             url = f'http://127.0.0.1:{server.server_port}'
             ctx = browser.new_context(viewport={'width':1390,'height':1000}, accept_downloads=True)
@@ -53,6 +67,11 @@ def main():
             errors = []
             page.on('pageerror', lambda err: errors.append(str(err)))
             page.goto(url)
+            page.get_by_role('button',name='Free fallbacks').click()
+            expect(page.get_by_role('dialog')).to_be_visible()
+            expect(page.get_by_role('dialog')).to_contain_text('whisper.cpp')
+            expect(page.get_by_role('dialog')).to_contain_text('YouTube Studio')
+            page.get_by_role('button',name='Close dialog').click()
             page.get_by_role('button',name='Import project').first.click()
             form = page.locator('#import-form')
             form.locator('[name="name"]').fill('The editing room')
@@ -140,6 +159,25 @@ def main():
             page.get_by_role('button',name='View render').click()
             expect(page.locator('.monitor-head')).to_contain_text('Rendered preview')
             expect(page.locator('.ambient-preview')).to_have_count(1)
+            # Diagnostic gate: separate authenticated HTTP delivery from browser codec support.
+            import subprocess
+            render_path = pilot.get_media_path(Path(tmp), job, clip, "preview")
+            info = subprocess.check_output(
+                ["ffprobe", "-v", "error", "-show_entries",
+                 "format=format_name,duration,size:stream=codec_type,codec_name,profile,pix_fmt,level,width,height,codec_tag_string",
+                 "-of", "json", str(render_path)], text=True)
+            sample = ctx.request.get(url + f'/media/{job}/{clip}/preview',
+                                     headers={'Range': 'bytes=0-63'})
+            print("Media probe:", info.strip(), flush=True)
+            print("Media HTTP:", {"status": sample.status,
+                                  "type": sample.headers.get("content-type"),
+                                  "length": sample.headers.get("content-length"),
+                                  "range": sample.headers.get("content-range"),
+                                  "sample_matches_file": sample.body() == render_path.read_bytes()[:64]}, flush=True)
+            print("Browser codecs:", page.locator('#video').evaluate('''video => ({
+                mp4: video.canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"'),
+                webm: video.canPlayType('video/webm; codecs="vp8, vorbis"')
+            })'''), flush=True)
             seek_preview(page, 2.2)
             page.evaluate('window.scrollTo(0, 0)')
             page.screenshot(path=str(args.screenshots/'studio-desktop.png'))
@@ -180,6 +218,21 @@ def main():
             page.get_by_role('link',name='Review desk').click()
             page.set_viewport_size({'width':390,'height':844})
             expect(page.get_by_role('heading',name='The editing room',exact=True)).to_be_visible()
+            expect(page.locator('.ambient-preview')).to_have_count(0)
+            expect(page.get_by_role('button', name='Toggle cinematic video backdrop')).to_be_disabled()
+            mobile_media = page.locator('#video').get_attribute('src')
+            print("Mobile foreground source:", mobile_media, flush=True)
+            if '/webm' in mobile_media:
+                retry = ctx.request.get(url + f'/media/{job}/{clip}/webm',
+                                        headers={'Range': 'bytes=0-63'})
+                print("Mobile WebM HTTP:", {'status': retry.status,
+                                           'type': retry.headers.get('content-type'),
+                                           'range': retry.headers.get('content-range'),
+                                           'prefix': retry.body()[:4].hex()}, flush=True)
+                webm_path = pilot.browser_preview(Path(tmp), job, clip)
+                print("WebM probe:", subprocess.check_output(['ffprobe','-v','error',
+                    '-show_entries','format=format_name,duration,size:stream=codec_type,codec_name',
+                    '-of','json',str(webm_path)],text=True).strip(),flush=True)
             seek_preview(page, 2.2)
             page.evaluate('window.scrollTo(0, 0)')
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
@@ -188,6 +241,7 @@ def main():
             reduced = browser.new_context(reduced_motion='reduce')
             try:
                 reduced_page = reduced.new_page()
+                reduced_page.goto(url)
                 reduced_page.goto(url + '/#desk/' + job)
                 reduced_button = reduced_page.get_by_role('button', name='Toggle cinematic video backdrop')
                 expect(reduced_button).to_be_disabled()
