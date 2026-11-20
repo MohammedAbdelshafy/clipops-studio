@@ -27,3 +27,8 @@ User's Windows worktrees may have local, uncommitted modifications to Windows co
 
 ## Release boundary
 Green CI enables supervised beta only. Do not claim Windows worktree sync, production multi-client authorization, massive Android transfer, automatic failover, Arabic/Franco ASR accuracy or real video editing excellence before physical evidence. Review PRs and merge only after conflict audit and approvals. No paid hosting, media upload to third parties, public deployment, outbound messages or live social posts.
+
+
+## Existing-live-server safe test mode
+
+On Windows, preserve the original Studio on 127.0.0.1:8765 and create an independent test worktree and private project root. The Android QA build supports an authenticated Microsoft Dev Tunnel `https://ID-8775.REGION.devtunnels.ms` to a second native Windows server bound to 127.0.0.1:8775. Pair using the local 20-minute, single-use console code; do not paste that code into chats or Git. This does not migrate or modify client projects.
