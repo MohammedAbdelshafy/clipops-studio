@@ -15,7 +15,8 @@
 3. **Bounded editing assistant:** supports `start MM:SS; end MM:SS; title: Text; cta: Text; remove MM:SS to MM:SS` with an explicit preview. Unsupported/ambiguous commands fail closed.
 4. **Approval preservation:** generating a proposal has zero edit, media, upload, or publication side effects. Clicking *Apply reviewed edits* routes changes through the existing project edit API, which invalidates affected approvals and requires rerendering and renewed review.
 5. **Read-only CLI:** `python3 clipops_creative_review.py /private/clipops-root/PROJECT_ID` emits a JSON report. Its input is limited to that project's `project.json` and an immutable `transcript-<id>.json` revision. Redirect stdout only to a trusted/private file if retaining the report.
-6. **Focused tests:** `python3 -m unittest -v test_clipops_creative_review.py` and HTTP endpoint regressions in `test_studio.py`.
+6. **Batch delivery ZIP:** Export Center offers one authenticated download containing only approved MP4/SRT/VTT files with verified integrity hashes and source-time provenance; ZIP excludes original source footage. ZIPs are created in short-lived private local storage; no external upload.
+7. **Focused tests:** `python3 -m unittest -v test_clipops_creative_review.py test_studio_delivery.py test_studio.py` plus the full clean-runner CI suite.
 
 ## Feature matrix: preserve what already exists, prioritize actual gaps
 
@@ -29,7 +30,7 @@
 | Maveform many clips / multiple models | Existing 24 suggested candidates, up to 30, local ASR; compare local model options only with user-approved resource budget | **Mostly existing** |
 | Vizard / OpusClip caption designer | Existing nine editing presets and editable transcript; enhance live caption preview, preset thumbnails and reusable client templates | **Existing + pending UX** |
 | Short.now project overview | Existing source timestamps, candidate explanations, status and QC; export a human-readable project brief | **Mostly existing** |
-| Zora-Labs ZIP batch download | Create approval-gated ZIP with MP4, SRT, VTT, source ranges and SHA-256 manifest | **Pending** |
+| Zora-Labs ZIP batch download | Approval-gated ZIP with MP4, SRT, VTT, source ranges and SHA-256 manifest | **Added** |
 | OpusClip B-roll and animated graphics | Existing cutaways, overlays and accent transitions; add searchable licensed asset library, provenance, motion templates and human approval | **Partly existing** |
 | NXTCLIP watermark-free delivery | ClipOps renders native deliverables without imposed vendor watermark; verify any third-party assets/voices separately | **Existing local design** |
 | External tool monthly credit limits | Keep local processing usable without per-clip SaaS limits; track hardware, electricity and model licensing as real costs | **Architecture principle** |
@@ -41,13 +42,13 @@
 
 **P0 / before paid customer trial:** run the full regression suite, browser E2E of the new tab and edit preview, a real rights-cleared hour-long bilingual video, and the actual 15–20 GiB resume/restart/disk-pressure test. Verify caption quality by sight, audio sync by ear, Arabic/Franco transcription, and exact invalidation of prior approvals. Run static/security checks and make a draft PR go green before any merge.
 
-**P1 / professional quality:** add speaker-specific caption palettes with colorblind-safe fallbacks, user-adjustable timing and live preview; manual profanity bleep/mute/blur with reversible edit decisions; ZIP delivery manifest; local completion notification; client brand kits and batch export profiles; local library of licensed B-roll; title and description variants grounded in source, not generated factual claims.
+**P1 / professional quality:** add speaker-specific caption palettes with colorblind-safe fallbacks, user-adjustable timing and live preview; manual profanity bleep/mute/blur with reversible edit decisions; local completion notification; client brand kits and batch export profiles; local library of licensed B-roll; title and description variants grounded in source, not generated factual claims.
 
 **P2 / advanced editing:** optional model-backed chat instructions behind a pluggable *local-first* provider layer; semantic similarity and duplicate detection; visual scene/face tracking with explicit consent; auto-suggested punch-ins and animation presets; adaptive caption emphasis and Arabic shaping; real edit retention and watch-time outcome analytics where consent and connected channel data exist.
 
 ## Verification and operational bounds
 
-- The new **offline helper** passed 7 local unit tests on 20 November 2026. JavaScript syntax was checked against the GitHub branch content. Full integration/CI and customer-footage acceptance remain to be verified.
+- Before the ZIP addition, the first clean-runner GitHub CI passed **103 tests** (20 November 2026). The ZIP-related changes require a fresh clean-runner pass; customer-footage acceptance remains unverified. JavaScript syntax was checked after both UI edits.
 - Earlier PR #8 reported 89 tests for its own synced release candidate; that number is **not evidence** that this branch's new integration passed.
 - Review labels and source quotes are aids for editors, never substitute for checking meaning, permissions, profanity context, quality or factual accuracy.
 - No cloud credentials, automatic social publishing, remote media uploads, or destructive changes are authorized by this change.
