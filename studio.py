@@ -15,14 +15,15 @@ import shutil
 import socket
 import tempfile
 import threading
-from urllib.parse import urlsplit
+import time
+from urllib.parse import parse_qs, urlsplit
 
 from studio_uploads import UploadStore, UploadError, TUS, EMPTY_RECEIPT, expires, checksum
 from free_fallbacks import free_routes
 import clipops_creative_review as creative_review
 import clipops_scene_review
 import studio_delivery
-from studio_preview import cloud_shell_origin, tailnet_origin, tailnet_login
+from studio_preview import cloud_shell_origin, tailnet_origin, tailnet_login, devtunnel_origin
 
 ASSETS = Path(__file__).resolve().parent / 'studio'
 STATIC = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
@@ -69,7 +70,7 @@ def project_view(project, detail):
 class DeskServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port, root, engine, model=None, source_dir=None, cloud_shell=False, web_host=None, tailnet_host=None, tailnet_user=None):
+    def __init__(self, port, root, engine, model=None, source_dir=None, cloud_shell=False, web_host=None, tailnet_host=None, tailnet_user=None, devtunnel_url=None):
         self.root = Path(root).expanduser().resolve()
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.engine = engine
@@ -90,16 +91,22 @@ class DeskServer(ThreadingHTTPServer):
         super().__init__(('127.0.0.1', port), DeskHandler)
         self.hosts = {f'127.0.0.1:{self.server_port}', f'localhost:{self.server_port}'}
         try:
-            if cloud_shell and (tailnet_host or tailnet_user):
-                raise ValueError('Choose Cloud Shell OR Tailscale Serve, not both')
+            if sum((bool(cloud_shell), bool(tailnet_host or tailnet_user), bool(devtunnel_url))) > 1:
+                raise ValueError('Choose exactly one private preview mode')
             if bool(tailnet_host) != bool(tailnet_user):
                 raise ValueError('Tailscale private mode requires both host and owner login')
             self.tailnet_user = tailnet_login(tailnet_user) if tailnet_host else None
+            self.dev_tunnel = bool(devtunnel_url)
             self.preview_origin = (cloud_shell_origin(self.server_port, web_host if web_host is not None else os.environ.get('WEB_HOST', ''))
-                                   if cloud_shell else tailnet_origin(tailnet_host) if tailnet_host else None)
+                                   if cloud_shell else tailnet_origin(tailnet_host) if tailnet_host else
+                                   devtunnel_origin(devtunnel_url) if self.dev_tunnel else None)
         except ValueError:
             self.server_close()
             raise
+        self.dev_pair_code = secrets.token_urlsafe(24) if self.dev_tunnel else None
+        self.dev_pair_deadline = time.monotonic() + 1200 if self.dev_tunnel else 0
+        self.dev_pair_attempts = 0
+        self.dev_pair_lock = threading.Lock()
         self.preview_host = urlsplit(self.preview_origin).netloc if self.preview_origin else None
         if self.preview_host:
             self.hosts.add(self.preview_host)
@@ -182,10 +189,63 @@ class DeskHandler(BaseHTTPRequestHandler):
         if self.command != 'HEAD':
             self.wfile.write(body)
 
+    def _devtunnel_has_session(self):
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get('Cookie', ''))
+        except CookieError:
+            return False
+        token = cookie.get(self.server.cookie_name)
+        return bool(token and secrets.compare_digest(token.value, self.server.session))
+
+    def _devtunnel_pair(self):
+        """One-use pairing; Microsoft account gate alone is not sufficient.
+
+        Requires private Dev Tunnel, exact Origin, 32-char random code and
+        an eight-attempt limit. No credentials or pairing codes in responses.
+        """
+        server = self.server
+        hosts = self.headers.get_all('Host', [])
+        if not server.dev_tunnel or self.command != 'POST':
+            raise RequestError(404, 'This pairing route is unavailable.')
+        if len(hosts) != 1 or hosts[0] not in server.hosts:
+            raise RequestError(403, 'Unknown Studio host.')
+        if self.headers.get('Sec-Fetch-Site') == 'cross-site':
+            raise RequestError(403, 'Pairing must originate from Studio.')
+        origin = self.headers.get('Origin')
+        if origin != server.preview_origin:
+            raise RequestError(403, 'Pair only on the exact private Studio HTTPS origin.')
+        if self.headers.get_content_type() != 'application/x-www-form-urlencoded':
+            raise RequestError(415, 'Use the local pairing form.')
+        raw = self.rfile.read(self._length(128)).decode('ascii', 'replace')
+        fields = parse_qs(raw, keep_blank_values=True, strict_parsing=True)
+        if sorted(fields) != ['code'] or len(fields['code']) != 1:
+            raise RequestError(400, 'Provide one pairing code.')
+        code = fields['code'][0]
+        if not isinstance(code, str) or len(code) != 32:
+            raise RequestError(400, 'Invalid pairing code format.')
+        with server.dev_pair_lock:
+            if (server.dev_pair_code is None or time.monotonic() > server.dev_pair_deadline
+                    or server.dev_pair_attempts >= 8):
+                raise RequestError(429, 'Pairing unavailable. Restart ClipOps to generate a new code.')
+            if not secrets.compare_digest(code, server.dev_pair_code):
+                server.dev_pair_attempts += 1
+                raise RequestError(403, 'Pairing code incorrect.')
+            server.dev_pair_code = None
+        self._headers(303, 'text/plain', 0, [
+            ('Location', '/'),
+            ('Set-Cookie', f'{server.cookie_name}={server.session}; HttpOnly; Secure; SameSite=Strict; Path=/')
+        ])
+
     def _validate_request(self, path):
         hosts = self.headers.get_all('Host', [])
         if len(hosts) != 1 or hosts[0] not in self.server.hosts:
             raise RequestError(403, 'Use the local Studio address shown at startup.')
+        if self.server.dev_tunnel and not self._devtunnel_has_session():
+            if path == '/' and self.command in ('GET', 'HEAD'):
+                return
+            raise RequestError(403, 'Pair this private Dev Tunnel with the code shown on your laptop.')
+
         if self.server.tailnet_user:
             # Tailscale Serve removes spoofed identity headers before forwarding.
             # Gate even static GET / so a shared tailnet URL cannot grant a cookie.
@@ -236,10 +296,16 @@ class DeskHandler(BaseHTTPRequestHandler):
         return value
 
     def _get(self, path):
+        if path == '/' and self.server.dev_tunnel and not self._devtunnel_has_session():
+            page = ("""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pair ClipOps Studio</title><style>body{font:16px system-ui;background:#0c1520;color:#edf8fa;max-width:32rem;margin:10vh auto;padding:2rem}input,button{font:inherit;padding:.8rem;width:100%;box-sizing:border-box;margin:.7rem 0}button{background:#b8f76f;border:0;border-radius:.7rem}input{background:#172739;color:white;border:1px solid #496078}</style></head><body><h1>ClipOps Studio · Private Pairing</h1><p>Sign in to your Microsoft or GitHub Dev Tunnel first. Enter the one-time code printed in your ClipOps laptop terminal. Never share it.</p><form action="/api/devtunnel/pair" method="post"><label for="code">One-time pairing code</label><input id="code" name="code" type="password" required minlength="32" maxlength="32" autocomplete="one-time-code"><button type="submit">Connect this browser</button></form></body></html>""").encode('utf-8')
+            self._headers(200, 'text/html; charset=utf-8', len(page))
+            if self.command != 'HEAD':
+                self.wfile.write(page)
+            return
         if path in STATIC:
             filename, mime = STATIC[path]
             content = (ASSETS / filename).read_bytes()
-            extra = [('Set-Cookie', f'{self.server.cookie_name}={self.server.session}; HttpOnly; SameSite=Strict; Path=/' + ('; Secure' if self.server.preview_origin else ''))] if path == '/' else []
+            extra = [('Set-Cookie', f'{self.server.cookie_name}={self.server.session}; HttpOnly; SameSite=Strict; Path=/' + ('; Secure' if self.server.preview_origin else ''))] if path == '/' and not self.server.dev_tunnel else []
             self._headers(200, mime, len(content), extra)
             if self.command != 'HEAD':
                 self.wfile.write(content)
@@ -563,6 +629,9 @@ class DeskHandler(BaseHTTPRequestHandler):
     def _handle(self):
         try:
             path = urlsplit(self.path).path
+            if path == '/api/devtunnel/pair' and self.server.dev_tunnel:
+                self._devtunnel_pair()
+                return
             self._validate_request(path)
             if path == '/api/uploads' or path.startswith('/api/uploads/'):
                 self._upload_route(path)
@@ -602,16 +671,22 @@ def main():
     parser.add_argument('--cloud-shell', action='store_true', help='Allow exact account-gated Google Cloud Shell HTTPS preview')
     parser.add_argument('--tailnet-host', help='Tailscale Serve private hostname: device.tailnet.ts.net')
     parser.add_argument('--tailnet-user', help='Tailscale owner login forwarded by Serve')
+    parser.add_argument('--devtunnel-url', help='Microsoft Dev Tunnels private HTTPS host URL (no anonymous access)')
     args = parser.parse_args()
     import pilot
     os.umask(0o077)
     with DeskServer(args.port, args.root, pilot, model=args.model, source_dir=args.source_dir, cloud_shell=args.cloud_shell,
-                    tailnet_host=args.tailnet_host, tailnet_user=args.tailnet_user) as server:
+                    tailnet_host=args.tailnet_host, tailnet_user=args.tailnet_user,
+                    devtunnel_url=args.devtunnel_url) as server:
         print(f'ClipOps Studio is ready at http://127.0.0.1:{server.server_port}', flush=True)
         if server.preview_origin:
             print(f'Private Studio HTTPS URL: {server.preview_origin}', flush=True)
             if server.tailnet_user:
                 print('Require Tailscale Serve owner identity; never use public Funnel.', flush=True)
+            if server.dev_tunnel:
+                print('Microsoft/GitHub SIGN-IN REQUIRED (never --allow-anonymous).', flush=True)
+                print(f'ClipOps one-time pairing code (20 min): {server.dev_pair_code}', flush=True)
+                print('Use this code ONLY inside the authorized Dev Tunnel page. Never post it in chat.', flush=True)
         if args.open:
             import webbrowser
             opener = threading.Thread(target=webbrowser.open, args=(f'http://127.0.0.1:{server.server_port}',), daemon=True)

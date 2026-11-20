@@ -48,7 +48,8 @@ jobs:
           set -euo pipefail
           ! grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml
           grep -q 'android:usesCleartextTraffic="false"' android/app/src/main/AndroidManifest.xml
-          grep -q 'versionCode = 2' android/app/build.gradle.kts
+          grep -q 'versionCode = 3' android/app/build.gradle.kts
+          grep -q 'HybridEndpoint.Engine.DEV_TUNNEL' android/app/src/main/java/com/mbm/clipops/pocket/MainActivity.kt
           grep -q 'applicationId = "com.mbm.clipops.studio"' android/app/build.gradle.kts
           grep -q 'Tailscale-User-Login' studio.py
           test -s docs/HYBRID_ANDROID_STUDIO.md

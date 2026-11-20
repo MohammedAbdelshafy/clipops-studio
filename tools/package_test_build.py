@@ -12,7 +12,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 EXTENSIONS = {'.py', '.js', '.css', '.html', '.md', '.txt', '.json', '.yaml', '.yml', '.svg', '.woff2'}
 ROOT_FILES = {'launch-studio', 'START_CLIPOPS.sh', 'START_CLIPOPS_WINDOWS.ps1',
-              'START_CLIPOPS_CLOUD_SHELL.sh', 'START_CLIPOPS_TAILNET.sh',
+              'START_CLIPOPS_CLOUD_SHELL.sh', 'START_CLIPOPS_TAILNET.sh', 'START_CLIPOPS_DEVTUNNEL.sh',
               'requirements-pilot.txt', 'requirements-visual-optional.txt', 'README.md', 'AGENTS.md', 'CONTEXT.md',
               'PILOT.md', 'VIDEO_WORKFLOW.md', 'MARKET_READY_QUALITY.md', 'SPRINT_HANDOFF.md'}
 DIRECTORIES = {'studio', 'docs', 'tools', 'agents', 'skills', 'examples'}

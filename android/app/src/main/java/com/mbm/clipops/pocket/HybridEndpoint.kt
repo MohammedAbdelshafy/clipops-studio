@@ -4,7 +4,7 @@ import java.net.URI
 
 /** User-configured private endpoints, never public arbitrary URLs or LAN cleartext. */
 internal object HybridEndpoint {
-    enum class Engine { LAPTOP, CLOUD }
+    enum class Engine { LAPTOP, CLOUD, DEV_TUNNEL }
     private val dnsLabel = Regex("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 
     fun validated(input: String, engine: Engine): String {
@@ -34,6 +34,11 @@ internal object HybridEndpoint {
                     labels.takeLast(2) == listOf("cloudshell","dev") &&
                     labels.first().startsWith("8080-") && labels.first().length > 5) {
                 "Cloud Studio must use the private https://8080-...cloudshell.dev preview address."
+            }
+            Engine.DEV_TUNNEL -> require(labels.size == 4 &&
+                    labels.takeLast(2) == listOf("devtunnels","ms") &&
+                    Regex("[a-z0-9][a-z0-9-]{1,55}-8765").matches(labels[0])) {
+                "Use the signed-in Microsoft Dev Tunnel HTTPS URL ending -8765.region.devtunnels.ms."
             }
         }
         return "https://$host/"

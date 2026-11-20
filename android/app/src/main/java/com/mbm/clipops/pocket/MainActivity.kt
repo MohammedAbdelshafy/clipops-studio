@@ -56,6 +56,7 @@ class MainActivity : Activity() {
     private lateinit var player: ExoPlayer
     private lateinit var preview: PlayerView
     private lateinit var laptopUrl: EditText
+    private lateinit var devTunnelUrl: EditText
     private lateinit var cloudUrl: EditText
     private lateinit var startInput: EditText
     private lateinit var endInput: EditText
@@ -171,6 +172,18 @@ class MainActivity : Activity() {
         body.addView(button("Open FULL Studio on laptop", highlighted = true) {
             openFullStudio(laptopUrl, HybridEndpoint.Engine.LAPTOP, "studio_laptop_url")
         })
+        body.addView(title("NO VPN · Microsoft Dev Tunnel (small tests)", 12f, muted))
+        devTunnelUrl = endpointField("https://your-id-8765.region.devtunnels.ms",
+            "studio_devtunnel_url")
+        body.addView(devTunnelUrl)
+        body.addView(button("Open FULL Studio without Tailscale") {
+            openFullStudio(devTunnelUrl, HybridEndpoint.Engine.DEV_TUNNEL, "studio_devtunnel_url")
+        })
+        body.addView(title(
+            "Sign in with your Microsoft/GitHub account in Chrome, then pair using the one-time " +
+            "code shown on the laptop. Microsoft Dev Tunnels has a 5 GB/month user bandwidth limit; " +
+            "use small clips only, never a 15–20 GB production upload.", 12f, muted
+        ))
         body.addView(title("CLOUD · Google account-gated Cloud Shell preview", 12f, muted))
         cloudUrl = endpointField("https://8080-...cloudshell.dev",
             "studio_cloud_url")
@@ -187,8 +200,8 @@ class MainActivity : Activity() {
             }
         })
         body.addView(title(
-            "These open the original full Studio UI and FFmpeg engine in your signed-in browser. " +
-            "Projects stay on the chosen engine; switching does not sync footage or jobs.",
+            "All three connection options open the original full Studio UI and FFmpeg engine in your " +
+            "signed-in browser. Projects stay on the selected engine; no automatic failover or sync.",
             12f, muted
         ))
         body.addView(title("02  /  Offline Pocket · emergency trim", 18f, ink, true))
