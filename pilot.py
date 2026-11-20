@@ -815,9 +815,15 @@ def purge_project(root, job_id):
     with lock(directory, ".worker"):
         if load_json(directory / PROJECT_FILE).get("id") != job_id:
             raise ValueError("Project receipt does not match its storage directory")
-        trash = directory.with_name(".purge-" + uuid4().hex)
+    # Windows refuses to rename a directory while one of its files is open, so
+    # the lease must be released first. The rename is atomic, so losing a race
+    # against another purge simply means there is nothing left to remove.
+    trash = directory.with_name(".purge-" + uuid4().hex)
+    try:
         directory.rename(trash)
-    shutil.rmtree(trash)
+        shutil.rmtree(trash)
+    except FileNotFoundError:
+        return
 
 
 def run_report(project):

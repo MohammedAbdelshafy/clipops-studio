@@ -74,7 +74,11 @@ class PilotTests(unittest.TestCase):
         with patch.object(pilot.subprocess, "run", side_effect=fake_encode) as run:
             path = pilot.browser_preview(self.root, job, "c01")
             self.assertEqual(path.read_bytes(), b"local-private-webm-test")
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            # Windows has no mode bits: assert the effective ACL instead.
+            if os.name == "nt":
+                self.assertTrue(is_private_path(path))
+            else:
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(path.name, "preview.webm")
             self.assertEqual(pilot.browser_preview(self.root, job, "c01"), path)
             self.assertEqual(run.call_count, 1)

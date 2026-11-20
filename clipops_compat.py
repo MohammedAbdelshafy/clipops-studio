@@ -63,27 +63,105 @@ def exclusive(fd: int, wait: bool = False):
         fcntl.flock(fd, fcntl.LOCK_UN)
 
 
+_CURRENT_SID = None
+_WINDOWS_ACL_CACHE = {}
+
+
 def _current_sid():
-    """Return the current Windows SID without third-party dependencies."""
-    try:
-        import subprocess
-        out = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"],
-                             capture_output=True, text=True, check=True).stdout
-        sid = out.strip().split('","')[-1].strip('"')
-        return sid if sid.upper().startswith("S-1-") else None
-    except Exception:
-        return None
+    """Return the current Windows SID, resolved once per process."""
+    global _CURRENT_SID
+    if _CURRENT_SID is None:
+        try:
+            import subprocess
+            out = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"],
+                                 capture_output=True, text=True, check=True).stdout
+            sid = out.strip().split('","')[-1].strip('"')
+            _CURRENT_SID = sid if sid.upper().startswith("S-1-") else False
+        except Exception:
+            _CURRENT_SID = False
+    return _CURRENT_SID or None
 
 
-def _private_principals():
-    allowed = {"SYSTEM", "BUILTIN\\Administrators", "OWNER RIGHTS", "CREATOR OWNER"}
-    user = os.environ.get("USERNAME", "")
-    if user:
-        allowed.add(user)
+def _allowed_sids():
+    """SIDs that may hold access without making the directory shared.
+
+    Windows has no 0700 mode bit; a private directory is one whose DACL grants
+    only the owning account plus the local SYSTEM/Administrator aliases.
+    """
+    # S-1-3-0 = CREATOR OWNER, S-1-3-4 = OWNER RIGHTS; Windows uses these
+    # placeholders in place of an explicit owner grant on inherited DACLs.
+    allowed = {"S-1-5-18", "S-1-5-32-544", "S-1-3-0", "S-1-3-4"}
     sid = _current_sid()
     if sid:
-        allowed.update((sid, "*" + sid))
+        allowed.add(sid)
     return allowed
+
+
+def _dacl_sids(path):
+    """ACCESS_ALLOWED SIDs on `path`, or None when they cannot be read.
+
+    Reads advapi32 directly instead of shelling out, so the verdict is stable
+    and cheap: the media pipeline replaces subprocess.run with test doubles,
+    and a per-request icacls/whoami round trip is pure overhead.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class AceHeader(ctypes.Structure):
+        _fields_ = [("AceType", wintypes.BYTE), ("AceFlags", wintypes.BYTE),
+                    ("AceSize", wintypes.WORD)]
+
+    class Acl(ctypes.Structure):
+        _fields_ = [("AclRevision", wintypes.BYTE), ("Sbz1", wintypes.BYTE),
+                    ("AclSize", wintypes.WORD), ("AceCount", wintypes.WORD),
+                    ("Sbz2", wintypes.WORD)]
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    get_info = advapi32.GetNamedSecurityInfoW
+    get_info.argtypes = [wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD,
+                         ctypes.c_void_p, ctypes.c_void_p,
+                         ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
+                         ctypes.POINTER(ctypes.c_void_p)]
+    get_info.restype = wintypes.DWORD
+    get_ace = advapi32.GetAce
+    get_ace.argtypes = [ctypes.c_void_p, wintypes.DWORD,
+                        ctypes.POINTER(ctypes.c_void_p)]
+    get_ace.restype = wintypes.BOOL
+    to_string = advapi32.ConvertSidToStringSidW
+    to_string.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    to_string.restype = wintypes.BOOL
+
+    dacl = ctypes.c_void_p()
+    descriptor = ctypes.c_void_p()
+    if get_info(str(path), 1, 0x4, None, None,
+                ctypes.byref(dacl), None, ctypes.byref(descriptor)) != 0:
+        return None
+    if not dacl:
+        return []  # A null DACL grants everyone access.
+    try:
+        acl = ctypes.cast(dacl, ctypes.POINTER(Acl)).contents
+        sids = []
+        for index in range(acl.AceCount):
+            ace = ctypes.c_void_p()
+            if not get_ace(dacl, index, ctypes.byref(ace)) or not ace:
+                return None
+            header = ctypes.cast(ace, ctypes.POINTER(AceHeader)).contents
+            if header.AceType != 0:  # Only ACCESS_ALLOWED_ACE is relevant.
+                return None
+            # ACCESS_ALLOWED_ACE: header (4) + mask (4) then the SID.
+            text = ctypes.c_void_p()
+            if not to_string(ctypes.c_void_p(ace.value + ctypes.sizeof(AceHeader) + 4),
+                             ctypes.byref(text)) or not text:
+                return None
+            try:
+                sids.append(ctypes.cast(text, ctypes.c_wchar_p).value)
+            finally:
+                kernel32.LocalFree(text)
+        return sids
+    finally:
+        if descriptor:
+            kernel32.LocalFree(descriptor)
 
 
 def sync_directory(path):
@@ -99,41 +177,25 @@ def sync_directory(path):
 
 
 def is_private_path(path, *, directory=False):
-    """POSIX: exactly the old mode-bit test. Windows: verify the ACL grants
-    only the owner, SYSTEM and Administrators (Windows has no real 0700)."""
-    from pathlib import Path as _Path
-    path = _Path(path)
+    """POSIX: exactly the old mode-bit test. Windows: the DACL must grant only
+    the owning account, SYSTEM and Administrators (Windows has no real 0700).
+
+    The verdict is cached per resolved path: an ACL change mid-process is not
+    re-read, which is the right trade for a single-user desktop store and keeps
+    the check off the per-request hot path.
+    """
+    path = Path(path)
     if os.name != "nt":
         return not path.stat().st_mode & 0o077
-    try:
-        import subprocess
-        out = subprocess.run(["icacls", str(path)], capture_output=True,
-                             text=True, check=True).stdout
-    except Exception:
-        return False
-    import re
-    # icacls prints grants as `PRINCIPAL:(RIGHTS)`; the first line also carries
-    # the path. Match only entries followed by an ACL flag, never `C:\...`.
-    grants = []
-    for number, line in enumerate(out.splitlines()):
-        idx = line.find(":(")
-        if idx < 0:
-            continue
-        principal = line[:idx].strip()
-        if number == 0:
-            principal = principal.replace(str(path), "").strip()
-        rights = line[idx:]
-        if principal and ":\\" not in principal and "(D)" not in rights:
-            grants.append(principal)
-    principals = grants
-    allowed = {p.lower() for p in _private_principals()}
-    machine = os.environ.get("COMPUTERNAME", "")
-    user = os.environ.get("USERNAME", "")
-    if machine and user:
-        allowed.add((machine + "\\" + user).lower())
-    allowed.update({"nt authority\\system", "builtin\\administrators",
-                    "owner rights", "creator owner"})
-    return bool(principals) and all(p.lower() in allowed for p in principals)
+    key = str(path.resolve())
+    if key in _WINDOWS_ACL_CACHE:
+        return _WINDOWS_ACL_CACHE[key]
+    sids = _dacl_sids(path)
+    verdict = bool(sids) and all(sid in _allowed_sids() for sid in sids)
+    if len(_WINDOWS_ACL_CACHE) > 512:
+        _WINDOWS_ACL_CACHE.clear()
+    _WINDOWS_ACL_CACHE[key] = verdict
+    return verdict
 
 
 def restrict_private_file(path):
