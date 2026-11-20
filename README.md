@@ -10,6 +10,8 @@
 
 Run `./launch-studio` after installing the free local dependencies. [First test](docs/TRY_CLIPOPS.md) · [Pilot guide](PILOT.md) · [Offline-first fallbacks](docs/FREE_FALLBACKS.md) · [Evidence and limits](docs/RC_HARDENING_RESULTS.md).
 
+**Google-inspired editorial skill checks (draft review branch only):** The existing **Creative review** pane can display transcript-grounded source/quote/boundary checks and explicitly unverified video, audio, rights, and story checks. These optional checks use no Google API, do not auto-edit, and never grant export approval. [Integration and test plan](docs/GOOGLE_AGENT_SKILLS_INTEGRATION_2026-11-20.md).
+
 **Desktop creative-review improvements (merged and locally testable):** In **Creative review**, use **Find source moments** to search the existing timestamped transcript in English or Arabic and preview selected in/out points. Use **Analyze visual scene changes** to inspect real frame transitions of that candidate using local FFmpeg. Nothing cuts or changes approvals until you apply and rerender the reviewed edit. [Implementation and constraints](docs/COMPETITIVE_UPGRADE_2026-11-20.md).
 
 > **Historical roadmap:** The Remotion generator documented below was scoped in October 2026 but is **not** in this repository. It is separate from the implemented FFmpeg pilot. Historical test claims refer to their recorded environments, not the current browser test.
