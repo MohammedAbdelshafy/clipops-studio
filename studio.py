@@ -245,8 +245,8 @@ class DeskHandler(BaseHTTPRequestHandler):
                 server.pair_attempts += 1
                 raise RequestError(403, 'Incorrect pairing code.')
             server.pair_code = None  # A captured code cannot be replayed.
-        secure = hosts[0] == server.tailnet_host
-        cookie = f'{server.cookie_name}={server.session}; HttpOnly; SameSite=Strict; Path=/' + ('; Secure' if secure else '')
+        # Always secure in private mode, including through a proxy rewriting Host to localhost.
+        cookie = f'{server.cookie_name}={server.session}; HttpOnly; SameSite=Strict; Path=/; Secure'
         headers = [('Set-Cookie', cookie)]
         if form:
             headers.append(('Location', '/'))
@@ -280,6 +280,11 @@ class DeskHandler(BaseHTTPRequestHandler):
                     origins = {self.server.preview_origin}
                 else:
                     origins.add(self.server.preview_origin)
+            if self.server.tailnet_origin:
+                if hosts[0] == self.server.tailnet_host:
+                    origins = {self.server.tailnet_origin}
+                else:
+                    origins.add(self.server.tailnet_origin)
             if self.headers.get('Origin') not in origins or not secrets.compare_digest(self.headers.get('X-ClipOps-CSRF', ''), self.server.csrf):
                 raise RequestError(403, 'This request requires an active Studio session. Reload the page.')
 
