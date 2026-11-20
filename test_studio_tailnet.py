@@ -131,7 +131,7 @@ class RemotePairingTests(unittest.TestCase):
                         'Origin':'http://'+local})
                     self.assertEqual(status,303)
                     self.assertEqual(headers['Location'],'/')
-                    self.assertNotIn('Secure', headers['Set-Cookie'])
+                    self.assertIn('Secure', headers['Set-Cookie'])
                 finally:
                     server.shutdown()
 
