@@ -18,3 +18,21 @@ def cloud_shell_origin(port: int, web_host: str) -> str:
     if len(labels) < 3 or labels[-2:] != ['cloudshell', 'dev'] or any(not _LABEL.fullmatch(x) for x in labels):
         raise ValueError('WEB_HOST must be the exact *.cloudshell.dev hostname issued by Cloud Shell')
     return f'https://{port}-{web_host}'
+
+def tailnet_origin(host: str) -> str:
+    """Allow the exact private MagicDNS HTTPS hostname issued by Tailscale Serve."""
+    if not isinstance(host, str) or not 1 <= len(host) <= 253 or not host.isascii():
+        raise ValueError('Enter the exact device.tailnet.ts.net hostname')
+    labels = host.split('.')
+    if len(labels) != 4 or labels[-2:] != ['ts', 'net'] or any(not _LABEL.fullmatch(x) for x in labels):
+        raise ValueError('Expected device.tailnet.ts.net, without URL, credentials, paths or ports')
+    return f'https://{host}'
+
+
+def tailnet_login(user: str) -> str:
+    """Validate a single trusted owner identity from Tailscale-User-Login."""
+    if not isinstance(user, str) or not 3 <= len(user) <= 254 or not user.isascii():
+        raise ValueError('A Tailscale owner login is required')
+    if user.count('@') != 1 or any(c.isspace() or ord(c) < 33 or ord(c) > 126 for c in user):
+        raise ValueError('Enter one exact Tailscale owner login, for example user@example.com')
+    return user.lower()
