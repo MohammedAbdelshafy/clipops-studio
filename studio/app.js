@@ -47,7 +47,7 @@ function mediaUrl(kind, clip=current()) {
 function notifyError(error) {
   const box = $('#dialog[open] .error-banner');
   if (box) box.textContent = error.message;
-  else notice(error.message, true);
+  else notice(error.message + ' · See Free fallbacks in the top bar.', true);
 }
 function openDialog(title, html) {
   $('#dialog-title').textContent = title;
@@ -55,6 +55,23 @@ function openDialog(title, html) {
   if (!$('#dialog').open) $('#dialog').showModal();
 }
 function closeDialog() { $('#dialog').close(); }
+async function showFreeFallbacks() {
+  const payload = await api('/api/fallbacks');
+  if (!Array.isArray(payload.routes)) throw new Error('Fallback directory unavailable.');
+  const groups = {intake:'Large video intake', speech:'Transcription', editing:'Editing', assets:'Artwork', distribution:'Publishing'};
+  const body = Object.entries(groups).map(([category,label]) => {
+    const entries = payload.routes.filter(r => r.workflow === category).map(r => {
+      const title = typeof r.url === 'string' && r.url.startsWith('https://')
+        ? '<a href="' + escapeText(r.url) + '" target="_blank" rel="noopener noreferrer">' + escapeText(r.title) + '</a>'
+        : '<strong>' + escapeText(r.title) + '</strong>';
+      const status = r.mode === 'local_optional' ? (r.available_here ? 'Configured here' : 'Needs local setup')
+        : r.mode === 'manual_external' ? 'External, manual only' : 'Built into ClipOps';
+      return '<div class="fallback-entry"><div>' + title + '<span>' + escapeText(status) + '</span></div><p>' + escapeText(r.description) + '</p></div>';
+    }).join('');
+    return '<section class="fallback-group"><h3>' + escapeText(label) + '</h3>' + entries + '</section>';
+  }).join('');
+  openDialog('Free fallback tools', '<p class="hint">Choose an offline or manually opened tool when an optional API is unavailable. Nothing automatically receives your footage.</p><div class="fallback-groups">' + body + '</div><p class="hint">' + escapeText(payload.policy) + '</p>');
+}
 function formField(label, control, wide=false) { return `<label class="field ${wide ? 'wide' : ''}">${label}${control}</label>`; }
 function button(action, label, cls='', disabled=false) { return `<button type="button" class="button ${cls}" data-action="${action}" ${disabled ? 'disabled' : ''}>${label}</button>`; }
 function titleBar(text, subtitle, buttons='') {
@@ -596,6 +613,7 @@ document.addEventListener('click', async event => {
       video.play().catch(notifyError); return;
     }
     switch (node.dataset.action) {
+      case 'fallbacks': await showFreeFallbacks(); break;
       case 'ambient':
         state.ambient = !state.ambient;
         try { localStorage.setItem('clipops-ambient-video',state.ambient ? 'on' : 'off'); }
