@@ -86,3 +86,35 @@ jobs:
         run: |
           test -x "$(command -v google-chrome)"
           python tools/test_studio_browser.py --chromium "$(command -v google-chrome)" --fixtures /tmp/clipops-fixtures --screenshots /tmp/clipops-browser-evidence
+
+      - name: Keep synthetic browser screenshots for visual review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClipOps-synthetic-browser-QA
+          path: /tmp/clipops-browser-evidence/*.png
+          retention-days: 7
+          if-no-files-found: ignore
+
+  package-test-build:
+    needs: [offline-test, browser-smoke]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact tested integration source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Create a checksum-manifested offline test ZIP
+        run: |
+          python3 tools/package_test_build.py "$RUNNER_TEMP/ClipOps-Studio-TEST.zip"
+          unzip -t "$RUNNER_TEMP/ClipOps-Studio-TEST.zip"
+      - name: Upload reviewed local test app
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClipOps-Studio-TEST
+          path: ${{ runner.temp }}/ClipOps-Studio-TEST.zip
+          retention-days: 14
+          if-no-files-found: error
