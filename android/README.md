@@ -10,10 +10,10 @@ For owner-only private laptop pairing and safe cloud setup, see [Hybrid Android 
 
 ## Android test build
 
-- Native app ID remains com.mbm.clipops.pocket for upgrade compatibility. Android 10+. Label is **ClipOps Studio**.
+- Native app ID is `com.mbm.clipops.studio` (Android 10+) and installs **alongside** the existing `com.mbm.clipops.pocket` beta; no old Pocket data or file deletion is needed. Label is **ClipOps Studio**.
 - Java 17, Gradle 8.13, Android Gradle Plugin 8.11.1, Kotlin 2.2.10, Media3 1.11.1, AndroidX Browser 1.10.0.
 - GitHub Actions debug APK includes unit tests for source clip bounds and strict endpoint validation.
 - A successful APK build does not verify that your own Windows Tailscale proxy, Cloud Shell login, customer media upload or physical Samsung codec works.
-- Since GitHub debug keys may be ephemeral, uninstalling an earlier beta APK may be necessary if Android says the installed app was signed with another key. Gallery clips saved externally remain separate from the app sandbox.
+- GitHub debug signing keys may change between test builds. For **subsequent hybrid builds with the same new app ID**, Android may require uninstalling the earlier hybrid test build. The original Pocket app remains separate and untouched; exported Gallery files remain separate from either app sandbox.
 
 No paid hosting, public deployment, account credential, asset migration or provider connection is created by installing the APK.
