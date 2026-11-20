@@ -83,3 +83,13 @@ The project is ready for **supervised local evaluation** when the merged build p
 - [ ] Open the cinematic ambient preview and confirm reduced-motion preference disables it.
 
 The CI package is a **single-user local test app**, not a standalone Windows executable or public hosted service. Editing footage requires FFmpeg and rights confirmation. Privacy and approval gates must stay enabled.
+
+### Browser codec notes
+
+The desktop/mobile editor tests also qualify a browser without MP4 codecs:
+ClipOps transparently generates a local 540p VP8/Opus WebM **rendered preview**
+only, while keeping the high-quality MP4 for human-approved downloads.
+The proxy is cached inside the private project render bundle and is removed
+when the render is invalidated. For long source video playback, choose a
+desktop browser with working H.264 support; the proxy builder for original
+source footage is a separate, explicitly requested local process.

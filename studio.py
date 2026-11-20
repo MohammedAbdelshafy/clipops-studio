@@ -244,9 +244,12 @@ class DeskHandler(BaseHTTPRequestHandler):
                 archive = Path(temporary) / 'approved-clips.zip'
                 studio_delivery.bundle_approved(self.server.engine, self.server.root, match[1], archive)
                 self._file(archive, 'bundle', 'approved-clips')
-        elif match := re.fullmatch(rf'/media/({ID})/(source|({CLIP})/(preview|export|srt|vtt))', path):
+        elif match := re.fullmatch(rf'/media/({ID})/(source|({CLIP})/(preview|webm|export|srt|vtt))', path):
             kind = match[4] or 'source'
-            file = self.server.engine.get_media_path(self.server.root, match[1], clip_id=match[3], kind=kind)
+            if kind == 'webm':
+                file = self.server.engine.browser_preview(self.server.root, match[1], match[3])
+            else:
+                file = self.server.engine.get_media_path(self.server.root, match[1], clip_id=match[3], kind=kind)
             self._file(Path(file), kind, match[3])
         else:
             raise RequestError(404, 'Route not found.')
