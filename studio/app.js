@@ -217,7 +217,10 @@ function drawTab() {
   area.innerHTML = ({details,captions,settings,review})[state.tab]();
 }
 function motionAllowed() {
-  return !window.matchMedia('(prefers-reduced-motion: reduce)').matches && !navigator.connection?.saveData;
+  // Multiple simultaneous HD video decoders on compact devices impair
+  // performance and may exhaust codec resources. Main video stays enabled.
+  return !window.matchMedia('(prefers-reduced-motion: reduce)').matches &&
+    !window.matchMedia('(max-width: 640px)').matches && !navigator.connection?.saveData;
 }
 function needsWebmReview(video) {
   // The local final deliverable stays H.264/AAC MP4. Only the visual preview
@@ -253,7 +256,7 @@ function syncAmbient() {
   toggle.setAttribute('aria-pressed',String(enabled));
   toggle.textContent = 'Ambient video: ' + (enabled ? 'On' : 'Off');
   toggle.title = !clip?.rendered ? 'Render a clip to preview its ambient background.' :
-    !motionAllowed() ? 'Motion is disabled by your reduced-motion or data-saver preference.' : '';
+    !motionAllowed() ? 'Ambient motion is disabled on compact screens or by reduced-motion/data-saver preferences.' : '';
 }
 function draw() {
   setNav();
@@ -670,6 +673,7 @@ document.addEventListener('change', event => {
 });
 window.addEventListener('hashchange',() => route().catch(notifyError));
 window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change',syncAmbient);
+window.matchMedia('(max-width: 640px)').addEventListener('change',syncAmbient);
 document.addEventListener('visibilitychange', () => {
   const background = document.querySelector('.ambient-preview');
   if (!background) return;
