@@ -56,8 +56,9 @@ class StudioActivity : Activity() {
     private var fullScreen:View?=null
     private var fullScreenExit:WebChromeClient.CustomViewCallback?=null
     private var closing=false
+    private var connectionVersion=0
 
-    private data class Download(val url:String,val name:String,val mime:String)
+    private data class Download(val url:String,val name:String,val mime:String,val origin:String)
     private fun dp(value:Int)=(resources.displayMetrics.density*value).toInt()
     private fun shape(color:Int):GradientDrawable=GradientDrawable().apply {
         setColor(color);cornerRadius=dp(14).toFloat()
@@ -216,6 +217,7 @@ class StudioActivity : Activity() {
     }
 
     private fun connect(raw:String,kind:String){
+        val version=++connectionVersion
         val selected=try{StudioEndpoint.parse(raw)}catch(error:IllegalArgumentException){
             message(error.message?:"Invalid private endpoint");return
         }
@@ -254,7 +256,9 @@ class StudioActivity : Activity() {
                 return@Thread
             }
             runOnUiThread{
+                if(closing || version != connectionVersion) return@runOnUiThread
                 CookieManager.getInstance().setCookie(selected.origin,cookie){success->
+                    if(closing || version != connectionVersion) return@setCookie
                     if(success){CookieManager.getInstance().flush();open(selected)}
                     else message("Could not save HTTPS session cookie.")
                 }
@@ -268,6 +272,7 @@ class StudioActivity : Activity() {
         browser.loadUrl(selected.origin+"/")
     }
     private fun showHome(){
+        connectionVersion++
         fullScreenExit?.onCustomViewHidden()
         engine=null
         if(::browser.isInitialized)browser.loadUrl("about:blank")
@@ -302,7 +307,7 @@ class StudioActivity : Activity() {
             ".vtt"->"text/vtt"
             else->"video/mp4"
         }
-        download=Download(url,safeName,mime)
+        download=Download(url,safeName,mime,selected.origin)
         try{
             startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply{
                 addCategory(Intent.CATEGORY_OPENABLE)
@@ -341,7 +346,11 @@ class StudioActivity : Activity() {
 
     private fun saveApproved(ticket:Download,destination:Uri){
         val selected=engine?:return
-        val cookie=CookieManager.getInstance().getCookie(selected.origin)
+        if(selected.origin != ticket.origin) {
+            message("Engine changed. Download again from the correct Studio.")
+            return
+        }
+        val cookie=CookieManager.getInstance().getCookie(ticket.origin)
         if(cookie.isNullOrBlank()){message("Session expired. Pair again.");return}
         message("Saving approved Studio export to Android...")
         Thread{
