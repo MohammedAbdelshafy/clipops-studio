@@ -67,6 +67,15 @@ class DeskTests(unittest.TestCase):
         self.assertEqual(self.request('POST', url+'/edit', b'{"model_path":"test"}', **auth,
                                       **{'Content-Type':'application/json'})[0], 400)
 
+    def test_free_fallbacks_requires_local_session(self):
+        self.assertEqual(self.request('GET','/api/fallbacks')[0],403)
+        status, _, body = self.request('GET','/api/fallbacks', **self.session())
+        self.assertEqual(status,200)
+        data = json.loads(body)
+        self.assertEqual(data["network_requests"],0)
+        self.assertTrue(any(row["id"] == "clipops_export" for row in data["routes"]))
+        self.assertFalse(any(row["automatic"] for row in data["routes"]))
+
     def test_preview_seek_head_and_download_gate(self):
         auth = self.session()
         url = '/media/' + self.project_id + '/c01/preview'
