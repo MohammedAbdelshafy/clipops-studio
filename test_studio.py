@@ -19,6 +19,9 @@ class DeskTests(unittest.TestCase):
         cls.root = Path(cls.files.name)
         cls.media = cls.root / 'authorized.mp4'
         cls.media.write_bytes(bytes(range(100)))
+        cls.webm = cls.root / 'review.webm'
+        cls.webm.write_bytes(bytes(range(60)))
+        
         cls.engine = Mock()
         cls.project_id = 'b' * 32
         cls.project = {'id': cls.project_id, 'name': 'Test project', 'source': {'name': 'authorized.mp4'},
@@ -26,6 +29,7 @@ class DeskTests(unittest.TestCase):
         cls.engine.get_project.return_value = cls.project
         cls.engine.list_projects.return_value = [cls.project]
         cls.engine.get_media_path.return_value = cls.media
+        cls.engine.browser_preview.return_value = cls.webm
         cls.server = DeskServer(0, cls.root, cls.engine)
         cls.addClassCleanup(cls.server.server_close)
         thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
@@ -67,6 +71,15 @@ class DeskTests(unittest.TestCase):
         self.assertEqual(self.request('POST', url+'/edit', b'{"model_path":"test"}', **auth,
                                       **{'Content-Type':'application/json'})[0], 400)
 
+    def test_free_fallbacks_requires_local_session(self):
+        self.assertEqual(self.request('GET','/api/fallbacks')[0],403)
+        status, _, body = self.request('GET','/api/fallbacks', **self.session())
+        self.assertEqual(status,200)
+        data = json.loads(body)
+        self.assertEqual(data["network_requests"],0)
+        self.assertTrue(any(row["id"] == "clipops_export" for row in data["routes"]))
+        self.assertFalse(any(row["automatic"] for row in data["routes"]))
+
     def test_preview_seek_head_and_download_gate(self):
         auth = self.session()
         url = '/media/' + self.project_id + '/c01/preview'
@@ -82,6 +95,17 @@ class DeskTests(unittest.TestCase):
             self.assertEqual(self.request('GET', url.replace('preview','export'), **auth)[0], 403)
         finally:
             self.engine.get_media_path.side_effect = None
+
+    def test_webm_preview_is_authenticated_and_preserves_export_gate(self):
+        url = '/media/' + self.project_id + '/c01/webm'
+        self.assertEqual(self.request('GET', url)[0], 403)
+        auth = self.session()
+        status, headers, data = self.request('GET', url, Range='bytes=4-7', **auth)
+        self.assertEqual(status, 206)
+        self.assertEqual(headers['Content-Type'], 'video/webm')
+        self.assertEqual(headers['Content-Range'], 'bytes 4-7/60')
+        self.assertEqual(data, bytes(range(4,8)))
+        self.engine.browser_preview.assert_called_with(self.root, self.project_id, 'c01')
 
     def test_upload_validates_rights_filename_and_content_before_pipeline(self):
         auth = self.session()

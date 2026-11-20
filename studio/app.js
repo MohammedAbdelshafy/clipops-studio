@@ -8,7 +8,11 @@ const reviews = {pending:'Pending review', approved:'Approved', rejected:'Reject
 const statuses = {queued:'Queued', processing:'Processing', review:'In review', failed:'Needs attention'};
 const names = {projects:'Project library', desk:'Review desk', exports:'Export center'};
 const tabNames = {details:'Clip details', captions:'Transcript & captions', settings:'Render settings', review:'Review & delivery'};
-const state = {csrf:'', model:false, projects:[], project:null, clipId:null, view:'projects', tab:'details', filter:'all', query:'', page:0, busy:false, version:0};
+const ambientPreference = (() => {
+  try { return localStorage.getItem('clipops-ambient-video') !== 'off'; }
+  catch { return true; }
+})();
+const state = {csrf:'', model:false, projects:[], project:null, clipId:null, view:'projects', tab:'details', filter:'all', query:'', page:0, busy:false, version:0, ambient:ambientPreference};
 let noticeTimer;
 
 function clock(seconds) {
@@ -43,7 +47,7 @@ function mediaUrl(kind, clip=current()) {
 function notifyError(error) {
   const box = $('#dialog[open] .error-banner');
   if (box) box.textContent = error.message;
-  else notice(error.message, true);
+  else notice(error.message + ' · See Free fallbacks in the top bar.', true);
 }
 function openDialog(title, html) {
   $('#dialog-title').textContent = title;
@@ -51,6 +55,23 @@ function openDialog(title, html) {
   if (!$('#dialog').open) $('#dialog').showModal();
 }
 function closeDialog() { $('#dialog').close(); }
+async function showFreeFallbacks() {
+  const payload = await api('/api/fallbacks');
+  if (!Array.isArray(payload.routes)) throw new Error('Fallback directory unavailable.');
+  const groups = {intake:'Large video intake', speech:'Transcription', editing:'Editing', assets:'Artwork', distribution:'Publishing'};
+  const body = Object.entries(groups).map(([category,label]) => {
+    const entries = payload.routes.filter(r => r.workflow === category).map(r => {
+      const title = typeof r.url === 'string' && r.url.startsWith('https://')
+        ? '<a href="' + escapeText(r.url) + '" target="_blank" rel="noopener noreferrer">' + escapeText(r.title) + '</a>'
+        : '<strong>' + escapeText(r.title) + '</strong>';
+      const status = r.mode === 'local_optional' ? (r.available_here ? 'Configured here' : 'Needs local setup')
+        : r.mode === 'manual_external' ? 'External, manual only' : 'Built into ClipOps';
+      return '<div class="fallback-entry"><div>' + title + '<span>' + escapeText(status) + '</span></div><p>' + escapeText(r.description) + '</p></div>';
+    }).join('');
+    return '<section class="fallback-group"><h3>' + escapeText(label) + '</h3>' + entries + '</section>';
+  }).join('');
+  openDialog('Free fallback tools', '<p class="hint">Choose an offline or manually opened tool when an optional API is unavailable. Nothing automatically receives your footage.</p><div class="fallback-groups">' + body + '</div><p class="hint">' + escapeText(payload.policy) + '</p>');
+}
 function formField(label, control, wide=false) { return `<label class="field ${wide ? 'wide' : ''}">${label}${control}</label>`; }
 function button(action, label, cls='', disabled=false) { return `<button type="button" class="button ${cls}" data-action="${action}" ${disabled ? 'disabled' : ''}>${label}</button>`; }
 function titleBar(text, subtitle, buttons='') {
@@ -104,8 +125,16 @@ async function refresh() {
 }
 function library() {
   const projects = state.projects;
-  if (!projects.length) return titleBar('Project library', '') + `<section class="panel empty-studio">${empty('Start a project', 'Import authorized footage and a timestamped transcript, or use a local speech model.', button('import','Import project','primary'))}</section>`;
-  return titleBar('Project library',meta([`${projects.length} local project${projects.length === 1 ? '' : 's'}`])) + `<section class="panel"><div class="panel-head"><h2>All projects</h2></div><div class="library-table">${projects.map(p => `<div class="list-row"><div><a class="project-link" href="#desk/${p.id}">${escapeText(p.name)}</a><small>${escapeText([p.source.name, platforms[p.platform]].filter(Boolean).join(' · '))}</small></div>${badge(statuses[p.status] || p.status, p.status === 'failed' ? 'bad' : '')}</div>`).join('')}</div></section>`;
+  const hero = `<section class="library-hero" aria-labelledby="studio-hero-title">
+    <div class="library-hero-copy"><p class="hero-eyebrow">CLIPOPS STUDIO / PRIVATE CREATIVE WORKSPACE</p>
+    <h2 id="studio-hero-title">One recording. A whole story to tell.</h2>
+    <p>Bring your footage into the edit room, discover moments worth sharing, and review each frame before delivery.</p>
+    <div class="hero-actions">${button('import','Import new footage','primary')}<span>Local-first · Review-led · No automatic publishing</span></div></div>
+    <div class="hero-reels" aria-hidden="true"><div class="reel-card reel-left"><span>01</span><i></i></div><div class="reel-card reel-center"><span>02</span><i></i><b>PLAY / REVIEW</b></div><div class="reel-card reel-right"><span>03</span><i></i></div></div>
+  </section>`;
+  const heading = titleBar('Project library', meta([projects.length ? `${projects.length} local project${projects.length === 1 ? '' : 's'}` : 'Your local production workspace']));
+  if (!projects.length) return heading + hero + `<section class="panel empty-studio">${empty('Start a project', 'Import authorized footage and a timestamped transcript, or use a local speech model.', button('import','Import project','primary'))}</section>`;
+  return heading + hero + `<section class="panel"><div class="panel-head"><h2>All projects</h2></div><div class="library-table">${projects.map(p => `<div class="list-row"><div><a class="project-link" href="#desk/${p.id}">${escapeText(p.name)}</a><small>${escapeText([p.source.name, platforms[p.platform]].filter(Boolean).join(' · '))}</small></div>${badge(statuses[p.status] || p.status, p.status === 'failed' ? 'bad' : '')}</div>`).join('')}</div></section>`;
 }
 function downloads(clip) {
   return ['export','srt','vtt'].map(type => `<a class="download" href="${mediaUrl(type, clip)}" download>${type === 'export' ? '↓ MP4' : type.toUpperCase()}</a>`).join('');
@@ -138,7 +167,7 @@ function monitor() {
   const length = c && rendered ? c.render?.duration ?? c.end - c.start : p.source.duration;
   const title = c?.title || p.source.name;
   const platform = rendered ? (platforms[p.platform] || p.platform).split(' · ')[0] : 'Original footage';
-  return `<section class="monitor" aria-label="Video preview"><div class="monitor-head"><span>${rendered ? 'Rendered preview' : 'Source preview'}</span><span class="mono">${escapeText(platform)}</span></div><div class="screen"><video id="video" preload="${rendered ? 'auto' : 'metadata'}" playsinline aria-label="${escapeText(title)}" src="${mediaUrl(rendered ? 'preview' : 'source')}?v=${state.version}"></video></div><div class="transport"><button class="icon-button" data-action="play" aria-label="Play preview" id="play-toggle">▶</button><input id="scrub" type="range" min="0" max="${Number(length) || 0}" step="0.001" value="0" aria-label="Preview timeline"><span class="mono"><time id="elapsed">0:00</time> / ${clock(length)}</span><button class="icon-button" data-action="full" aria-label="Full screen preview">⛶</button></div><div class="monitor-actions">
+  return `<section class="monitor" aria-label="Video preview"><div class="monitor-head"><span>${rendered ? 'Rendered preview' : 'Source preview'}</span><span class="mono">${escapeText(platform)}</span></div><div class="cinema-stage"><div class="screen"><video id="video" preload="${rendered ? 'auto' : 'metadata'}" playsinline aria-label="${escapeText(title)}" src="${mediaUrl(rendered ? 'preview' : 'source')}?v=${state.version}"></video></div></div><div class="transport"><button class="icon-button" data-action="play" aria-label="Play preview" id="play-toggle">▶</button><input id="scrub" type="range" min="0" max="${Number(length) || 0}" step="0.001" value="0" aria-label="Preview timeline"><span class="mono"><time id="elapsed">0:00</time> / ${clock(length)}</span><button class="icon-button" data-action="full" aria-label="Full screen preview">⛶</button></div><div class="monitor-actions"><button type="button" class="button ambient-switch" data-action="ambient" aria-label="Toggle cinematic video backdrop" aria-pressed="false">Ambient video: Off</button>
     ${c?.rendered ? button('compare',rendered ? 'View source' : 'View render') : ''}
     ${c && !rendered ? button('mark-in','Set In')+button('mark-out','Set Out') : ''}
     ${!p.proxy_ready ? button('proxy','Build browser preview','',p.busy) : ''}
@@ -187,6 +216,48 @@ function drawTab() {
   for (const tab of document.querySelectorAll('[data-tab]')) tab.setAttribute('aria-pressed', String(tab.dataset.tab === state.tab));
   area.innerHTML = ({details,captions,settings,review})[state.tab]();
 }
+function motionAllowed() {
+  // Multiple simultaneous HD video decoders on compact devices impair
+  // performance and may exhaust codec resources. Main video stays enabled.
+  return !window.matchMedia('(prefers-reduced-motion: reduce)').matches &&
+    !window.matchMedia('(max-width: 640px)').matches && !navigator.connection?.saveData;
+}
+function needsWebmReview(video) {
+  // The local final deliverable stays H.264/AAC MP4. Only the visual preview
+  // falls back if the browser advertises no support for those codecs.
+  return !video.canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"')
+    && Boolean(video.canPlayType('video/webm; codecs="vp8, opus"'));
+}
+function syncAmbient() {
+  const stage = document.querySelector('.cinema-stage');
+  if (!stage) return;
+  const clip = current();
+  const enabled = Boolean(state.ambient && clip?.rendered && !state.sourceView && motionAllowed());
+  const background = stage.querySelector('.ambient-preview');
+  if (!enabled && background) { background.pause(); background.remove(); }
+  if (enabled && !background) {
+    const video = document.createElement('video');
+    video.className = 'ambient-preview';
+    video.src = document.querySelector('#video')?.src || (mediaUrl('preview',clip) + '?v=' + state.version);
+    video.muted = true;
+    video.loop = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.preload = 'none';
+    video.setAttribute('aria-hidden','true');
+    video.tabIndex = -1;
+    video.disablePictureInPicture = true;
+    stage.prepend(video);
+    video.play().catch(() => {}); // Cosmetic playback must never block editing.
+  }
+  stage.classList.toggle('ambient-on',enabled);
+  const toggle = stage.closest('.monitor').querySelector('[data-action="ambient"]');
+  toggle.disabled = !clip?.rendered || !motionAllowed() || Boolean(state.sourceView);
+  toggle.setAttribute('aria-pressed',String(enabled));
+  toggle.textContent = 'Ambient video: ' + (enabled ? 'On' : 'Off');
+  toggle.title = !clip?.rendered ? 'Render a clip to preview its ambient background.' :
+    !motionAllowed() ? 'Ambient motion is disabled on compact screens or by reduced-motion/data-saver preferences.' : '';
+}
 function draw() {
   setNav();
   const main = $('#main');
@@ -194,13 +265,16 @@ function draw() {
   if (state.view === 'projects') main.innerHTML = library();
   else if (!state.project) main.innerHTML = titleBar(names[state.view], '') + `<section class="panel empty-studio">${empty('Choose a project','Import footage or select a project in the library.',`<a href="#projects" class="button">Project library</a>`)}</section>`;
   else if (state.view === 'exports') main.innerHTML = exportsPage();
-  else { main.innerHTML = desk(); bindVideo(); drawTab(); }
+  else { main.innerHTML = desk(); bindVideo(); drawTab(); syncAmbient(); }
 }
 function bindVideo(requestedTime=null, fullSource=false) {
   const video = $('#video');
   if (!video) return;
   const c = current();
   const rendered = c?.rendered && !state.sourceView && !fullSource;
+  if (rendered && needsWebmReview(video)) {
+    video.src = mediaUrl('webm', c) + '?v=' + state.version;
+  }
   const start = 0;
   const end = rendered ? c.render?.duration ?? c.end - c.start : state.project.source.duration;
   const seek = requestedTime ?? (rendered ? 0 : (c?.start || 0));
@@ -540,6 +614,8 @@ document.addEventListener('click', async event => {
       const cue = state.project.segments[Number(node.dataset.seek)];
       const video = $('#video');
       video.src = mediaUrl('source');
+      state.sourceView = true;
+      syncAmbient();
       bindVideo(cue.start,true);
       $('.monitor-head span').textContent = 'Source preview';
       $('.monitor-head .mono').textContent = 'Original footage';
@@ -549,6 +625,13 @@ document.addEventListener('click', async event => {
       video.play().catch(notifyError); return;
     }
     switch (node.dataset.action) {
+      case 'fallbacks': await showFreeFallbacks(); break;
+      case 'ambient':
+        state.ambient = !state.ambient;
+        try { localStorage.setItem('clipops-ambient-video',state.ambient ? 'on' : 'off'); }
+        catch { /* Studio works without browser storage. */ }
+        syncAmbient();
+        break;
       case 'close':
         if (state.transfer?.active) state.transfer.controller.abort();
         closeDialog(); break;
@@ -589,6 +672,14 @@ document.addEventListener('change', event => {
   if (event.target.id === 'filter') { state.filter = event.target.value; $('#candidates').innerHTML = candidateRows(); }
 });
 window.addEventListener('hashchange',() => route().catch(notifyError));
+window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change',syncAmbient);
+window.matchMedia('(max-width: 640px)').addEventListener('change',syncAmbient);
+document.addEventListener('visibilitychange', () => {
+  const background = document.querySelector('.ambient-preview');
+  if (!background) return;
+  if (document.hidden) background.pause();
+  else if (motionAllowed()) background.play().catch(() => {});
+});
 async function boot() {
   const session = await api('/api/session'); state.csrf = session.csrf; state.model = session.local_model; state.session = session;
   state.projects = await api('/api/projects'); await route();

@@ -84,12 +84,12 @@ def project_dir(root, job_id):
 
 
 @contextmanager
-def lock(directory, filename):
-    """The OS releases this nonblocking lock even if a worker is killed."""
+def lock(directory, filename, *, wait=False):
+    """The OS releases this lock on termination. Only cache readers opt into waiting."""
     fd = os.open(directory / filename, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise ValueError("A worker is busy. Retry when the current operation finishes.") from exc
         yield
@@ -527,6 +527,55 @@ def get_media_path(root, job_id, clip_id=None, kind="preview"):
     if kind not in ARTIFACTS:
         raise ValueError("Unknown media type")
     return approved_media(directory, candidate(state, clip_id), kind)
+
+
+
+def browser_preview(root, job_id, clip_id):
+    """Lazy, private WebM review proxy for browsers without MP4 decoders.
+
+    Never alters the approved MP4, SRT, VTT, their hashes or project state.
+    The reduced resolution is for viewing only. Serialized against other
+    project edits, atomically installed, and never sent to another service.
+    """
+    directory = project_dir(root, job_id)
+    # Both the cinematic layer and foreground player can ask at once. Wait for
+    # one conversion and reuse it; do not return an HTTP error to the loser.
+    with lock(directory, ".worker", wait=True):
+        state = load_json(directory / PROJECT_FILE)
+        source = approved_media(directory, candidate(state, clip_id), "preview")
+        output = source.with_name("preview.webm")
+        if output.is_symlink():
+            raise ValueError("Browser preview is not a regular local file")
+        if output.is_file():
+            if output.stat().st_size > 0:
+                return output
+            output.unlink()
+        if not shutil.which("ffmpeg"):
+            raise ValueError("Local FFmpeg is required for WebM preview")
+        with tempfile.TemporaryDirectory(prefix=".browser-preview-", dir=source.parent) as temp:
+            draft = Path(temp) / "preview.webm"
+            command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+                       "-y", "-max_alloc", "268435456", "-threads", "2",
+                       "-i", str(source), "-map", "0:v:0", "-map", "0:a:0",
+                       "-vf", "scale=w='min(540,iw)':h='min(540,ih)':"
+                              "force_original_aspect_ratio=decrease:force_divisible_by=2,"
+                              "fps=24,format=yuv420p",
+                       "-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "8",
+                       "-b:v", "650k", "-c:a", "libopus", "-b:a", "72k",
+                       "-map_metadata", "-1", "-map_chapters", "-1",
+                       "-f", "webm", str(draft)]
+            duration = float((candidate(state, clip_id).get("render") or {}).get("duration") or 30)
+            timeout = max(120, min(600, round(duration * 8)))
+            try:
+                subprocess.run(command, check=True, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=timeout)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                raise ValueError("Local WebM preview conversion failed. The MP4 export is unchanged.") from exc
+            if not draft.is_file() or draft.stat().st_size == 0:
+                raise ValueError("Local WebM preview was empty")
+            os.chmod(draft, 0o600)
+            os.replace(draft, output)
+        return output
 
 
 def generate_proxy(root, job_id):
