@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
+import hashlib
 import html
 import json
 import os
@@ -20,12 +22,16 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
-from urllib import request
+from urllib import request as urllib_request
 from uuid import uuid4
 
 
 def run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-    p = subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False)
+    try:
+        p = subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False,
+                           stdin=subprocess.DEVNULL, timeout=45 if command[0] == "ffprobe" else 3600)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"{command[0]} exceeded its local execution limit") from exc
     if p.returncode:
         raise RuntimeError(f"{command[0]} failed ({p.returncode}): {p.stderr[-1300:]}")
     return p
@@ -33,7 +39,13 @@ def run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProc
 
 def media_info(path: str | Path) -> dict:
     p = Path(path).expanduser().resolve(strict=True)
-    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration,size:stream=codec_name,codec_type,width,height", "-of", "json", str(p)]
+    if not p.is_file():
+        raise ValueError("Expected a regular local media file")
+    cmd = ["ffprobe", "-v", "error", "-protocol_whitelist", "file",
+           "-format_whitelist", "mov,matroska,webm,avi,mpeg,mpegts,flv,asf,ogg,mxf,dv",
+           "-max_streams", "32", "-max_alloc", "268435456", "-max_pixels", "35389440",
+           "-show_entries", "format=duration,size,format_name:stream=codec_name,codec_type,width,height",
+           "-of", "json", str(p)]
     info = json.loads(run(cmd).stdout)
     if not any(s.get("codec_type") == "video" for s in info.get("streams", [])):
         raise ValueError("Input has no video stream")
@@ -61,15 +73,8 @@ def sec_to_stamp(seconds: float, vtt: bool = False) -> str:
 
 
 def normalize_segments(items: list[dict]) -> list[dict]:
-    result = []
-    for item in items:
-        start, end = float(item["start"]), float(item["end"])
-        text = re.sub(r"\s+", " ", str(item["text"])).strip()
-        if start < 0 or end <= start or not text:
-            raise ValueError("Segments need nonempty text and strictly increasing positive timing")
-        result.append({"start": start, "end": end, "text": text})
-    result.sort(key=lambda x: x["start"])
-    return result
+    from pilot_intelligence import normalize
+    return normalize(items)
 
 
 def segments_from(path: str | Path) -> list[dict]:
@@ -97,7 +102,18 @@ def subtitle_text(segments: list[dict], vtt: bool = False, start: float = 0, end
 
 
 def transcribe(media: str, output: str, model_name: str = "small", language: str | None = None) -> dict:
-    require_local_file(media)
+    source = require_local_file(media)
+    out = Path(output).expanduser().resolve()
+    if out == source:
+        raise ValueError("Transcript output must differ from the source")
+    if Path(model_name).expanduser().is_dir():
+        from pilot_intelligence import transcribe_local, _atomic_json
+        result = transcribe_local(source, Path(model_name).expanduser(), out.parent / ".clipops-transcription", language)
+        # The original captions command groups word-per-row transcripts. Keep
+        # that on-disk contract while retaining source-relative word alignment.
+        rows = [word for row in result["segments"] for word in (row.get("words") or [row])]
+        _atomic_json(out, {**result, "segments": rows})
+        return {"path": str(out), "language": result["language"], "segments": len(rows)}
     try:
         from faster_whisper import WhisperModel  # optional, may download model
     except ImportError as e:
@@ -140,34 +156,9 @@ def caption_groups(segments: list[dict], max_words: int = 7, max_seconds: float 
 
 
 def suggest_clips(segments: list[dict], min_seconds: float = 10, max_seconds: float = 55, limit: int = 5) -> list[dict]:
-    """Transparent keyword heuristic; editor approval required. Not a virality predictor."""
-    if min_seconds <= 0 or max_seconds < min_seconds or limit < 1:
-        raise ValueError("Invalid duration or limit")
-    markers = ("how to", "mistake", "secret", "never", "best", "why", "important", "learn", "tip", "problem", "solution", "because", "imagine", "don't", "stop")
-    results = []
-    for i, first in enumerate(segments):
-        end_index = i
-        while end_index + 1 < len(segments) and segments[end_index]["end"] - first["start"] < min_seconds:
-            end_index += 1
-        while end_index < len(segments) and segments[end_index]["end"] - first["start"] <= max_seconds:
-            clip_segments = segments[i : end_index + 1]
-            full = " ".join(x["text"] for x in clip_segments)
-            span = clip_segments[-1]["end"] - first["start"]
-            if span >= min_seconds:
-                beginning = " ".join(x["text"] for x in clip_segments[: min(14, len(clip_segments))]).lower()
-                hits = sum(m in beginning for m in markers)
-                score = round(min(100, 40 + 15 * hits + min(len(full.split()), 60) / 6), 2)
-                results.append({"start": round(first["start"], 2), "end": round(clip_segments[-1]["end"], 2), "score": score, "preview": full[:180]})
-                break  # shortest sufficient window per start
-            end_index += 1
-    results.sort(key=lambda x: (-x["score"], x["start"]))
-    chosen = []
-    for candidate in results:
-        if all(max(0, min(candidate["end"], other["end"]) - max(candidate["start"], other["start"])) < (candidate["end"] - candidate["start"]) * .5 for other in chosen):
-            chosen.append(candidate)
-        if len(chosen) >= limit:
-            break
-    return chosen
+    """Rank source-grounded excerpts for an editor using the pilot's shared analysis."""
+    from pilot_intelligence import rank_candidates
+    return rank_candidates(segments, limit=limit, min_seconds=min_seconds, max_seconds=max_seconds)
 
 
 def render_clip(media: str, output: str, start: float, end: float, captions: str | None = None, fit: str = "blur", width: int = 720, height: int = 1280) -> dict:
@@ -194,7 +185,12 @@ def render_clip(media: str, output: str, start: float, end: float, captions: str
             segs = caption_groups(segments_from(captions))
             (wd / "captions.srt").write_text(subtitle_text(segs, start=start, end=end), encoding="utf-8")
             vf += ",subtitles=filename=captions.srt:force_style='FontName=DejaVu Sans,FontSize=21,Outline=2,Alignment=2,MarginV=60'"
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", str(start), "-i", str(src), "-t", str(end-start), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)]
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", str(start),
+               "-protocol_whitelist", "file", "-format_whitelist", "mov,matroska,webm,avi,mpeg,mpegts,flv,asf,ogg,mxf,dv",
+               "-max_streams", "32", "-max_alloc", "268435456", "-max_pixels", "35389440",
+               "-threads", "2", "-i", str(src), "-t", str(end-start), "-vf", vf, "-c:v", "libx264",
+               "-threads", "2", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+               "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)]
         run(cmd, wd)
     quality = media_info(out)
     return {"file": str(out), "duration": duration(quality), "fit": fit, "captions": bool(captions), "quality": quality["streams"]}
@@ -211,12 +207,14 @@ def promo(brief_path: str, output: str, width: int = 720, height: int = 1280) ->
     out = Path(output).expanduser().resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
     font = config.get("font") or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    font = require_local_file(font)
+    font = require_local_file(font, (".ttf", ".otf", ".ttc"))
     color = config.get("background", "#172033")
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
         raise ValueError("background must be #RRGGBB")
     with tempfile.TemporaryDirectory(prefix="clipops-promo-") as d:
         wd = Path(d)
+        # Keep caller-controlled font paths and text outside FFmpeg's filter grammar.
+        shutil.copyfile(font, wd / "brand-font")
         clips = []
         for i, scene in enumerate(scenes):
             text = str(scene.get("text", "")).strip()
@@ -226,7 +224,7 @@ def promo(brief_path: str, output: str, width: int = 720, height: int = 1280) ->
             text_file = wd / f"text{i}.txt"
             text_file.write_text(text, encoding="utf-8")
             part = wd / f"card{i}.mp4"
-            draw = f"drawtext=fontfile={font}:textfile={text_file.name}:fontcolor=white:fontsize={max(20, width//15)}:box=1:boxcolor=black@0.40:boxborderw=24:x=(w-text_w)/2:y=(h-text_h)/2"
+            draw = f"drawtext=fontfile=brand-font:textfile={text_file.name}:expansion=none:fontcolor=white:fontsize={max(20, width//15)}:box=1:boxcolor=black@0.40:boxborderw=24:x=(w-text_w)/2:y=(h-text_h)/2"
             run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"color=c=0x{color[1:]}:s={width}x{height}:r=25", "-t", str(seconds), "-vf", draw, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", str(part)], wd)
             clips.append(part)
         joined = wd / "joined.txt"
@@ -236,11 +234,12 @@ def promo(brief_path: str, output: str, width: int = 720, height: int = 1280) ->
     return {"file": str(out), "scenes": len(scenes), "duration": duration(media_info(out))}
 
 
+UPLOAD_LIMIT = 300 * 1024 * 1024
 SCHEMA = """CREATE TABLE IF NOT EXISTS jobs (
  id TEXT PRIMARY KEY, file TEXT NOT NULL, platform TEXT NOT NULL, integration_id TEXT NOT NULL,
  title TEXT NOT NULL, caption TEXT NOT NULL, scheduled_utc TEXT NOT NULL,
  status TEXT NOT NULL DEFAULT 'draft', rights_confirmed INTEGER NOT NULL DEFAULT 0,
- response_json TEXT, updated_utc TEXT NOT NULL);"""
+ response_json TEXT, updated_utc TEXT NOT NULL, approved_sha256 TEXT);"""
 
 
 @contextmanager
@@ -251,6 +250,13 @@ def connect(db: str):
     try:
         con.row_factory = sqlite3.Row
         con.execute(SCHEMA)
+        if "approved_sha256" not in {r[1] for r in con.execute("PRAGMA table_info(jobs)")}:
+            with con:
+                con.execute("BEGIN IMMEDIATE")
+                if "approved_sha256" not in {r[1] for r in con.execute("PRAGMA table_info(jobs)")}:
+                    con.execute("ALTER TABLE jobs ADD COLUMN approved_sha256 TEXT")
+                    # Older approvals predate byte binding. Preserve drafts and submission history.
+                    con.execute("UPDATE jobs SET status='draft', rights_confirmed=0 WHERE status='approved'")
         with con:
             yield con
     finally:
@@ -281,9 +287,30 @@ def approve_job(db: str, job_id: str, rights: bool = False) -> None:
     if not rights:
         raise ValueError("Approval requires confirming rights to source media (--rights-confirmed)")
     with connect(db) as con:
-        cur = con.execute("UPDATE jobs SET status='approved', rights_confirmed=1, updated_utc=? WHERE id=? AND status='draft'", (iso_utc(datetime.now(timezone.utc).isoformat()), job_id))
+        draft = con.execute("SELECT file FROM jobs WHERE id=? AND status='draft'", (job_id,)).fetchone()
+        if draft is None:
+            raise ValueError("Job is missing or not a draft")
+        digest = _media_digest(draft["file"])
+        cur = con.execute("UPDATE jobs SET status='approved', rights_confirmed=1, approved_sha256=?, "
+                          "updated_utc=? WHERE id=? AND status='draft' AND file=?",
+                          (digest, iso_utc(datetime.now(timezone.utc).isoformat()), job_id, draft["file"]))
         if cur.rowcount != 1:
             raise ValueError("Job is missing or not a draft")
+
+
+def _media_digest(path: str) -> str:
+    p = require_local_file(path, (".mp4",))
+    if p.stat().st_size > UPLOAD_LIMIT:
+        raise ValueError("Uploads above 300 MiB require another transfer method")
+    digest = hashlib.sha256()
+    total = 0
+    with p.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            total += len(block)
+            if total > UPLOAD_LIMIT:
+                raise ValueError("Uploads above 300 MiB require another transfer method")
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def qc_media(path: str | Path) -> dict:
@@ -304,6 +331,24 @@ def list_jobs(db: str) -> list[dict]:
         return [dict(row) for row in con.execute("SELECT * FROM jobs ORDER BY scheduled_utc, id")]
 
 
+_dispatch_job = ContextVar("clipops_dispatch_job", default=None)
+
+
+class _PostizTransport:
+    """The network boundary only opens during a claimed dispatch in this context."""
+
+    def urlopen(self, req, *, timeout):
+        grant = _dispatch_job.get()
+        if not grant or getattr(req, "_clipops_approval", None) != grant:
+            raise ValueError("Outbound scheduling requires an approved, claimed dispatch")
+        if os.environ.get("CLIPOPS_ALLOW_PUBLISH") != "1":
+            raise RuntimeError("Live publishing is disabled")
+        return urllib_request.urlopen(req, timeout=timeout)
+
+
+request = _PostizTransport()
+
+
 def postiz_publish(job: dict, api_key: str, base_url: str = "https://api.postiz.com/public/v1") -> dict:
     """Send one approved, previously vetted job to Postiz scheduler (network action)."""
     if base_url.rstrip("/") != "https://api.postiz.com/public/v1":
@@ -313,13 +358,21 @@ def postiz_publish(job: dict, api_key: str, base_url: str = "https://api.postiz.
     file_path = require_local_file(job["file"], (".mp4",))
     # multipart/form-data upload, using explicit byte lengths, no third-party dependencies
     boundary = "clipops" + uuid4().hex
-    data = file_path.read_bytes()
-    if len(data) > 300 * 1024 * 1024:
-        raise ValueError("Uploads above 300 MB require another transfer method")
+    if file_path.stat().st_size > UPLOAD_LIMIT:
+        raise ValueError("Uploads above 300 MiB require another transfer method")
+    with file_path.open("rb") as stream:
+        data = stream.read(UPLOAD_LIMIT + 1)
+    if len(data) > UPLOAD_LIMIT:
+        raise ValueError("Uploads above 300 MiB require another transfer method")
+    expected = job.get("approved_sha256")
+    if expected and hashlib.sha256(data).hexdigest() != expected:
+        raise ValueError("Media bytes changed after approval. Create a new draft for review.")
     start = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"clip.mp4\"\r\n"
              "Content-Type: video/mp4\r\n\r\n").encode()
     payload = start + data + f"\r\n--{boundary}--\r\n".encode()
-    upload = request.Request(base_url + "/upload", payload, {"Authorization": api_key, "Content-Type": f"multipart/form-data; boundary={boundary}"}, method="POST")
+    upload = urllib_request.Request(base_url + "/upload", payload, {"Content-Type": f"multipart/form-data; boundary={boundary}"}, method="POST")
+    upload._clipops_approval = (job["id"], expected)
+    upload.add_unredirected_header("Authorization", api_key)
     with request.urlopen(upload, timeout=120) as resp:
         attached = json.load(resp)
     if not attached.get("id") or not attached.get("path"):
@@ -334,7 +387,9 @@ def postiz_publish(job: dict, api_key: str, base_url: str = "https://api.postiz.
         "posts": [{"integration": {"id": job["integration_id"]},
                    "value": [{"content": html.escape(job["caption"]), "image": [{"id": attached["id"], "path": attached["path"]}]}], "settings": settings}]
     }
-    req = request.Request(base_url + "/posts", json.dumps(post).encode(), {"Authorization": api_key, "Content-Type": "application/json"}, method="POST")
+    req = urllib_request.Request(base_url + "/posts", json.dumps(post).encode(), {"Content-Type": "application/json"}, method="POST")
+    req._clipops_approval = (job["id"], expected)
+    req.add_unredirected_header("Authorization", api_key)
     with request.urlopen(req, timeout=120) as resp:
         created = json.load(resp)
     return {"postiz": created, "uploaded_media": attached}
@@ -357,6 +412,8 @@ def dispatch(db: str, job_id: str, live: bool = False) -> dict:
     api_key = os.environ.get("POSTIZ_API_KEY")
     if not api_key:
         raise RuntimeError("POSTIZ_API_KEY not configured")
+    if not job["approved_sha256"] or _media_digest(job["file"]) != job["approved_sha256"]:
+        raise ValueError("Media bytes changed after approval. Create a new draft for review.")
     # Fail closed before claiming a job or making a network request. This
     # technical gate complements (does NOT replace) human captions/rights QA.
     quality = qc_media(job["file"])
@@ -368,12 +425,15 @@ def dispatch(db: str, job_id: str, live: bool = False) -> dict:
         c = con.execute("UPDATE jobs SET status='submitting' WHERE id=? AND status='approved'", (job_id,))
         if c.rowcount != 1:
             raise ValueError("Job already claimed or changed")
+    grant = _dispatch_job.set((job_id, job["approved_sha256"]))
     try:
         result = postiz_publish(job, api_key)
     except Exception as exc:
         with connect(db) as con:
-            con.execute("UPDATE jobs SET status='needs_manual_review',response_json=? WHERE id=?", (json.dumps({"error": str(exc)[:500]}), job_id))
+            con.execute("UPDATE jobs SET status='needs_manual_review',response_json=? WHERE id=?", (json.dumps({"error_type": type(exc).__name__}), job_id))
         raise
+    finally:
+        _dispatch_job.reset(grant)
     with connect(db) as con:
         con.execute("UPDATE jobs SET status='submitted_to_postiz',response_json=? WHERE id=?", (json.dumps(result), job_id))
     return {"id": job_id, "status": "submitted_to_postiz", "response": result}

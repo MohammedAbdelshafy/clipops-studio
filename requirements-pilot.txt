@@ -1,0 +1,2 @@
+# Pillow measures caption width with the same locally installed fonts used by libass.
+Pillow==13.0.0

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ClipOps Studio · Review desk</title><link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/studio.css"><script src="/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to workspace</a>
+<div class="app-shell">
+  <aside class="rail" aria-label="Studio navigation">
+    <a class="wordmark" href="#projects" aria-label="ClipOps Studio project library"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span><span>ClipOps <b>Studio</b></span></a>
+    <nav id="navigation" aria-label="Workspace">
+      <a href="#projects" data-view="projects"><span class="icon grid-icon" aria-hidden="true"></span>Project library</a>
+      <a href="#desk" data-view="desk"><span class="icon desk-icon" aria-hidden="true"></span>Review desk</a>
+      <a href="#exports" data-view="exports"><span class="icon export-icon" aria-hidden="true">↓</span>Export center</a>
+    </nav>
+    <div class="rail-projects"><h2>Projects</h2><div id="project-links"></div></div>
+    <div class="local-state"><span class="online-dot"></span>Local workspace</div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><div class="crumb"><span>Workspace</span><span class="slash">/</span><strong id="breadcrumb">Project library</strong></div><button class="button primary" data-action="import"><span aria-hidden="true">＋</span> Import project</button></header>
+    <main id="main" tabindex="-1" aria-busy="true"><p class="loading">Opening local workspace…</p></main>
+  </div>
+</div>
+<dialog id="dialog" aria-labelledby="dialog-title"><div class="dialog-head"><h2 id="dialog-title"></h2><button class="icon-button" data-action="close" aria-label="Close dialog">×</button></div><div id="dialog-body"></div></dialog>
+<div id="notice" role="status" aria-live="polite" hidden></div>
+</body></html>

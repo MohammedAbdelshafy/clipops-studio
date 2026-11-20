@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+studio_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+python_bin="${CLIPOPS_PYTHON:-python3}"
+if [[ -x "$studio_dir/.venv/bin/python" && -z "${CLIPOPS_PYTHON:-}" ]]; then
+    python_bin="$studio_dir/.venv/bin/python"
+fi
+if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null || ! command -v fc-match >/dev/null; then
+    printf '%s\n' 'Install FFmpeg, FFprobe, and Fontconfig before launching Studio. See PILOT.md.' >&2
+    exit 1
+fi
+if ! "$python_bin" -c 'import sys; assert sys.version_info >= (3,11); import PIL' >/dev/null 2>&1; then
+    printf '%s\n' 'Studio needs Python 3.11+ with Pillow. See PILOT.md for the one-time setup.' >&2
+    exit 1
+fi
+exec "$python_bin" "$studio_dir/studio.py" --root "${CLIPOPS_PROJECT_DIR:-$HOME/ClipOps-private}" --open "$@"
