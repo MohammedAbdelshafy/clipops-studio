@@ -162,6 +162,8 @@ def propose_edit(clip, instruction, source_duration):
             field = match[1].lower()
             if field in changes or not match[2].strip():
                 raise ValueError('Duplicate or empty edit field')
+            if field == 'title' and len(match[2].strip()) > 240:
+                raise ValueError('Clip title exceeds the editor limit')
             changes[field] = match[2].strip()
         elif match := re.fullmatch(r'remove\s+(\S+)\s+to\s+(\S+)', command, flags=re.IGNORECASE):
             removals.append([parse_time(match[1]), parse_time(match[2])])
