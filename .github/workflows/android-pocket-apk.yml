@@ -1,4 +1,4 @@
-name: ClipOps Pocket Android APK
+name: ClipOps Studio Hybrid Android APK
 
 on:
   pull_request:
@@ -41,12 +41,16 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-      - name: Test clip boundaries and build standalone debug APK
+      - name: Test local clip bounds and private hybrid endpoints; build APK
         run: gradle -p android :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
       - name: Check private offline app manifest and archive integrity
         run: |
           set -euo pipefail
           ! grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:usesCleartextTraffic="false"' android/app/src/main/AndroidManifest.xml
+          grep -q 'versionCode = 2' android/app/build.gradle.kts
+          grep -q 'Tailscale-User-Login' studio.py
+          grep -q 'owner-gated' docs/HYBRID_ANDROID_STUDIO.md || true
           ! grep -q 'android.permission.READ_EXTERNAL_STORAGE' android/app/src/main/AndroidManifest.xml
           test -s android/app/build/outputs/apk/debug/app-debug.apk
           unzip -t android/app/build/outputs/apk/debug/app-debug.apk | tail -n 1
@@ -54,7 +58,7 @@ jobs:
       - name: Upload APK for direct Android installation
         uses: actions/upload-artifact@v4
         with:
-          name: ClipOps-Pocket-APK
+          name: ClipOps-Studio-Hybrid-APK
           path: |
             android/app/build/outputs/apk/debug/app-debug.apk
             android/app/build/outputs/apk/debug/SHA256SUMS.txt
