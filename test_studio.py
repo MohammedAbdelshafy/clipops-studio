@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from studio import DeskServer
 
@@ -112,6 +112,61 @@ class DeskTests(unittest.TestCase):
         self.assertEqual(upload(base),201)
         self.assertEqual(list(self.root.glob('.ingest-*')),[])
         self.engine.create_project.reset_mock()
+
+    def test_creative_review_is_local_and_edit_preview_does_not_mutate(self):
+        auth = self.session()
+        project = self.project
+        old_source = project['source']
+        old_rows = project['segments']
+        old_candidates = project['candidates']
+        self.engine.edit_project.reset_mock()
+        try:
+            project['source'] = {'name': 'authorized.mp4', 'duration': 20}
+            project['segments'] = [{'start': 0, 'end': 7, 'text': 'Why do our editors need careful caption reviews?',
+                                    'speaker': 'Host'}]
+            project['candidates'] = [{'id': 'c01', 'start': 0, 'end': 7, 'score': 80,
+                                      'remove_ranges': [], 'review': 'pending'}]
+            review_url = f'/api/projects/{self.project_id}/c01/creative'
+            status, _, body = self.request('GET', review_url, **auth)
+            self.assertEqual(status, 200)
+            result = json.loads(body)
+            self.assertEqual(result['hook_source']['start'], 0)
+            self.assertEqual(result['candidate_id'], 'c01')
+            self.assertEqual(self.request('GET', review_url.replace('/c01/', '/c99/'), **auth)[0], 404)
+
+            proposal_url = f'/api/projects/{self.project_id}/propose'
+            headers = {**auth, 'Content-Type': 'application/json'}
+            status, _, body = self.request('POST', proposal_url,
+                                           json.dumps({'candidate_id': 'c01', 'instruction': 'start 00:01; end 00:06'}), **headers)
+            self.assertEqual(status, 200)
+            preview = json.loads(body)
+            self.assertEqual(preview['proposed_updates'], {'start': 1.0, 'end': 6.0})
+            self.assertFalse(preview['applied'])
+            self.assertEqual(project['candidates'][0]['start'], 0)
+            self.engine.edit_project.assert_not_called()
+            self.assertEqual(self.request('POST', proposal_url, json.dumps(
+                {'candidate_id': 'c01', 'instruction': 'publish now'}), **headers)[0], 400)
+        finally:
+            project['source'] = old_source
+            project['segments'] = old_rows
+            project['candidates'] = old_candidates
+
+    def test_batch_zip_requires_session_and_uses_private_temporary_storage(self):
+        path = f'/api/projects/{self.project_id}/approved-delivery.zip'
+        self.assertEqual(self.request('GET', path)[0], 403)
+        auth = self.session()
+        with patch('studio.studio_delivery.bundle_approved') as make_bundle:
+            make_bundle.side_effect = lambda engine, root, project_id, destination: destination.write_bytes(b'private zip fixture')
+            status, headers, body = self.request('GET', path, **auth)
+            self.assertEqual(status, 200)
+            self.assertEqual(body, b'private zip fixture')
+            self.assertIn('attachment', headers['Content-Disposition'])
+            self.assertEqual(self.request('HEAD', path, **auth)[0], 405)
+        self.assertEqual(list(self.root.glob('.delivery-*')), [])
+
+        with patch('studio.studio_delivery.bundle_approved', side_effect=PermissionError('No approved clips')):
+            self.assertEqual(self.request('GET', path, **auth)[0], 403)
+        self.assertEqual(list(self.root.glob('.delivery-*')), [])
 
     def test_destructive_action_requires_matching_project_name(self):
         status, _, _ = self.request('POST',f'/api/projects/{self.project_id}/purge',b'{"confirm_name":"elsewhere"}',
