@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.mbm.clipops.pocket"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.mbm.clipops.pocket"
