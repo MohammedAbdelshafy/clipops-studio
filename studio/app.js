@@ -113,7 +113,7 @@ function downloads(clip) {
 function exportsPage() {
   const p = state.project;
   const deliverable = p.candidates.filter(c => c.rendered && c.qc?.passed && c.review === 'approved');
-  return titleBar('Export center', meta([p.name, `${deliverable.length} approved for delivery`])) + `<section class="panel"><div class="panel-head"><h2>Approved clips</h2></div>${deliverable.length ? `<div class="export-list">${deliverable.map(c => `<div class="list-row"><div><strong dir="auto">${escapeText(c.title)}</strong><small>${clock(c.start)}–${clock(c.end)} · ${escapeText(c.editor || '')}</small></div><div class="actions">${downloads(c)}</div></div>`).join('')}</div>` : empty('No approved exports', 'Review a rendered clip and confirm its rights to unlock delivery.', `<a class="button" href="#desk/${p.id}">Open review desk</a>`)}</section>`;
+  return titleBar('Export center', meta([p.name, `${deliverable.length} approved for delivery`])) + `<section class="panel"><div class="panel-head"><h2>Approved clips</h2>${deliverable.length ? `<a class="button dark" href="/api/projects/${p.id}/approved-delivery.zip" download="approved-clips.zip">↓ Download approved batch ZIP</a>` : ''}</div>${deliverable.length ? `<div class="export-list">${deliverable.map(c => `<div class="list-row"><div><strong dir="auto">${escapeText(c.title)}</strong><small>${clock(c.start)}–${clock(c.end)} · ${escapeText(c.editor || '')}</small></div><div class="actions">${downloads(c)}</div></div>`).join('')}</div>` : empty('No approved exports', 'Review a rendered clip and confirm its rights to unlock delivery.', `<a class="button" href="#desk/${p.id}">Open review desk</a>`)}</section>`;
 }
 function projectMeta(p) {
   const src = p.source;
