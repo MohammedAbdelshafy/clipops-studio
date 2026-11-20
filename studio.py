@@ -21,6 +21,7 @@ from studio_uploads import UploadStore, UploadError, TUS, EMPTY_RECEIPT, expires
 from free_fallbacks import free_routes
 import clipops_creative_review as creative_review
 import studio_delivery
+from studio_preview import cloud_shell_origin
 
 ASSETS = Path(__file__).resolve().parent / 'studio'
 STATIC = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
@@ -67,7 +68,7 @@ def project_view(project, detail):
 class DeskServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port, root, engine, model=None, source_dir=None):
+    def __init__(self, port, root, engine, model=None, source_dir=None, cloud_shell=False, web_host=None):
         self.root = Path(root).expanduser().resolve()
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.engine = engine
@@ -86,6 +87,14 @@ class DeskServer(ThreadingHTTPServer):
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='clipops-render')
         super().__init__(('127.0.0.1', port), DeskHandler)
         self.hosts = {f'127.0.0.1:{self.server_port}', f'localhost:{self.server_port}'}
+        try:
+            self.preview_origin = cloud_shell_origin(self.server_port, web_host if web_host is not None else os.environ.get('WEB_HOST', '')) if cloud_shell else None
+        except ValueError:
+            self.server_close()
+            raise
+        self.preview_host = urlsplit(self.preview_origin).netloc if self.preview_origin else None
+        if self.preview_host:
+            self.hosts.add(self.preview_host)
         self.cookie_name = f'clipops_{self.server_port}'
 
     def queue_job(self, project_id, count, clip_ids=None, proxy=False):
@@ -182,7 +191,16 @@ class DeskHandler(BaseHTTPRequestHandler):
         if not token or not secrets.compare_digest(token.value, self.server.session):
             raise RequestError(403, 'Open Studio in a local browser to begin a session.')
         if self.command in ('POST', 'PATCH', 'DELETE'):
-            if self.headers.get('Origin') != 'http://' + hosts[0] or not secrets.compare_digest(self.headers.get('X-ClipOps-CSRF', ''), self.server.csrf):
+            # Cloud Shell's account-authenticated HTTPS proxy may keep the
+            # original Host or forward localhost. Accept only its exact
+            # WEB_HOST-derived origin and retain the existing CSRF token.
+            origins = {'http://' + hosts[0]}
+            if self.server.preview_origin:
+                if hosts[0] == self.server.preview_host:
+                    origins = {self.server.preview_origin}
+                else:
+                    origins.add(self.server.preview_origin)
+            if self.headers.get('Origin') not in origins or not secrets.compare_digest(self.headers.get('X-ClipOps-CSRF', ''), self.server.csrf):
                 raise RequestError(403, 'This request requires an active Studio session. Reload the page.')
 
     def _length(self, maximum):
@@ -206,7 +224,7 @@ class DeskHandler(BaseHTTPRequestHandler):
         if path in STATIC:
             filename, mime = STATIC[path]
             content = (ASSETS / filename).read_bytes()
-            extra = [('Set-Cookie', f'{self.server.cookie_name}={self.server.session}; HttpOnly; SameSite=Strict; Path=/')] if path == '/' else []
+            extra = [('Set-Cookie', f'{self.server.cookie_name}={self.server.session}; HttpOnly; SameSite=Strict; Path=/' + ('; Secure' if self.server.preview_origin else ''))] if path == '/' else []
             self._headers(200, mime, len(content), extra)
             if self.command != 'HEAD':
                 self.wfile.write(content)
@@ -547,11 +565,14 @@ def main():
     parser.add_argument('--source-dir', type=Path, help='Optional trusted folder for direct, read-only import')
     parser.add_argument('--open', action='store_true', help='Open the local studio in the default browser')
     parser.add_argument('--model', type=Path, help='Optional local faster-whisper model directory')
+    parser.add_argument('--cloud-shell', action='store_true', help='Allow exact account-gated Google Cloud Shell HTTPS preview')
     args = parser.parse_args()
     import pilot
     os.umask(0o077)
-    with DeskServer(args.port, args.root, pilot, model=args.model, source_dir=args.source_dir) as server:
+    with DeskServer(args.port, args.root, pilot, model=args.model, source_dir=args.source_dir, cloud_shell=args.cloud_shell) as server:
         print(f'ClipOps Studio is ready at http://127.0.0.1:{server.server_port}', flush=True)
+        if server.preview_origin:
+            print(f'Android preview (Google sign-in required): {server.preview_origin}', flush=True)
         if args.open:
             import webbrowser
             opener = threading.Thread(target=webbrowser.open, args=(f'http://127.0.0.1:{server.server_port}',), daemon=True)
