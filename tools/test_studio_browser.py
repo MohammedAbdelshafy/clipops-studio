@@ -109,6 +109,13 @@ def main():
             assert job == upload_id
             clip = page.locator('[data-clip]').first.get_attribute('data-clip')
             print('Browser import and candidate selection passed', flush=True)
+            page.get_by_role('button', name='Creative review').click()
+            page.get_by_role('button', name='Analyze this clip').click()
+            expect(page.get_by_role('heading', name='Verbatim quote bank')).to_be_visible()
+            page.locator('#creative-form textarea').fill('title: A reviewable opening; cta: Check the original')
+            page.get_by_role('button', name='Preview safe edit').click()
+            expect(page.get_by_role('heading', name='Edit preview — not applied')).to_be_visible()
+            print('Creative quote bank and non-mutating edit preview passed', flush=True)
             page.get_by_role('button',name='Transcript & captions').click()
             page.get_by_role('searchbox',name='Search transcript').fill('biography')
             expect(page.locator('.cue')).to_have_count(1)
@@ -195,6 +202,15 @@ def main():
                     page.get_by_role('link',name=label).click()
                 assert download.value.failure() is None
                 assert download.value.path().stat().st_size > 0
+            with page.expect_download() as batch:
+                page.get_by_role('link', name='Download approved batch ZIP').click()
+            assert batch.value.failure() is None
+            import zipfile
+            with zipfile.ZipFile(batch.value.path()) as package:
+                files = set(package.namelist())
+                assert 'delivery-manifest.json' in files and any(name.endswith('/clip.mp4') for name in files)
+                assert all('input' not in name.lower() for name in files)
+            print('Approval-verified MP4/SRT/VTT batch ZIP passed',flush=True)
             print('Rejected preapproval export, attribution, rejection, rights gate and three approved downloads passed',flush=True)
             page.get_by_role('link',name='Review desk').click()
             page.set_viewport_size({'width':390,'height':844})
