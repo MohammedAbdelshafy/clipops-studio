@@ -215,6 +215,8 @@ def main():
             page.get_by_role('link',name='Review desk').click()
             page.set_viewport_size({'width':390,'height':844})
             expect(page.get_by_role('heading',name='The editing room',exact=True)).to_be_visible()
+            expect(page.locator('.ambient-preview')).to_have_count(0)
+            expect(page.get_by_role('button', name='Toggle cinematic video backdrop')).to_be_disabled()
             seek_preview(page, 2.2)
             page.evaluate('window.scrollTo(0, 0)')
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
