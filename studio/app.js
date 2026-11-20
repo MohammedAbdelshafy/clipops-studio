@@ -219,6 +219,12 @@ function drawTab() {
 function motionAllowed() {
   return !window.matchMedia('(prefers-reduced-motion: reduce)').matches && !navigator.connection?.saveData;
 }
+function needsWebmReview(video) {
+  // The local final deliverable stays H.264/AAC MP4. Only the visual preview
+  // falls back if the browser advertises no support for those codecs.
+  return !video.canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"')
+    && Boolean(video.canPlayType('video/webm; codecs="vp8, opus"'));
+}
 function syncAmbient() {
   const stage = document.querySelector('.cinema-stage');
   if (!stage) return;
@@ -229,7 +235,7 @@ function syncAmbient() {
   if (enabled && !background) {
     const video = document.createElement('video');
     video.className = 'ambient-preview';
-    video.src = mediaUrl('preview',clip) + '?v=' + state.version;
+    video.src = document.querySelector('#video')?.src || (mediaUrl('preview',clip) + '?v=' + state.version);
     video.muted = true;
     video.loop = true;
     video.autoplay = true;
@@ -263,6 +269,9 @@ function bindVideo(requestedTime=null, fullSource=false) {
   if (!video) return;
   const c = current();
   const rendered = c?.rendered && !state.sourceView && !fullSource;
+  if (rendered && needsWebmReview(video)) {
+    video.src = mediaUrl('webm', c) + '?v=' + state.version;
+  }
   const start = 0;
   const end = rendered ? c.render?.duration ?? c.end - c.start : state.project.source.duration;
   const seek = requestedTime ?? (rendered ? 0 : (c?.start || 0));
