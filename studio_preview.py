@@ -5,6 +5,7 @@ itself continues to bind exclusively to loopback and retains cookie/CSRF gates.
 """
 from __future__ import annotations
 import re
+from urllib.parse import urlsplit
 
 _LABEL = re.compile(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z')
 
@@ -36,3 +37,31 @@ def tailnet_login(user: str) -> str:
     if user.count('@') != 1 or re.fullmatch(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+', user) is None:
         raise ValueError('Enter one exact Tailscale owner login, for example user@example.com')
     return user.lower()
+
+
+def devtunnel_origin(url: str) -> str:
+    """Validate Microsoft's private, browser-friendly dev tunnel HTTPS URL.
+
+    Only the no-port HTTPS hostname (id-8765.region.devtunnels.ms) is
+    supported, not inspection endpoints, URL tokens or arbitrary hosts.
+    This validates syntax, NOT the user's access-control policy.
+    """
+    if not isinstance(url, str) or not 14 <= len(url) <= 253 or not url.isascii() or url != url.strip():
+        raise ValueError('Enter the exact private Dev Tunnels HTTPS URL')
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+    except ValueError:
+        raise ValueError('Invalid Dev Tunnels URL') from None
+    if (parsed.scheme != 'https' or not hostname or parsed.netloc != hostname
+            or parsed.path not in ('', '/') or parsed.query or parsed.fragment):
+        raise ValueError('Use only a clean HTTPS Dev Tunnels hostname with no path, port or credentials')
+    labels = hostname.split('.')
+    if (len(labels) != 4 or labels[-2:] != ['devtunnels', 'ms']
+            or not all(_LABEL.fullmatch(x) for x in labels)):
+        raise ValueError('Expected id-8765.region.devtunnels.ms HTTPS hostname')
+    name, region = labels[0], labels[1]
+    match = re.fullmatch(r'([a-z0-9][a-z0-9-]{1,55})-([0-9]{4,5})', name)
+    if not match or not 2000 <= int(match.group(2)) <= 65000 or name.endswith('-inspect'):
+        raise ValueError('Use the actual port-forward URL (not the Dev Tunnel inspector)')
+    return f'https://{hostname}'

@@ -4,6 +4,8 @@
 
 **Android hybrid Studio:** [Private full desktop-on-phone guide](docs/HYBRID_ANDROID_STUDIO.md). Open the same Studio UI from an Android APK using an owner-verified Tailscale laptop backend or account-gated Cloud Shell. Offline Pocket remains a trim-only backup. Backend connection, media transfer and project sync are not automatic.
 
+**Android without Tailscale:** [Microsoft Dev Tunnels private, account-gated laptop bridge](docs/ANDROID_WITHOUT_TAILSCALE.md). Adds one-time laptop-console pairing for short-video testing only (Microsoft's 5 GB/month limit); keeps the existing Studio engine and Android app, with no public or paid hosting activated.
+
 **Android phone:** [Run in account-restricted Google Cloud Shell](docs/ANDROID_CLOUD_SHELL.md) using `bash START_CLIPOPS_CLOUD_SHELL.sh` after opening the repository in Cloud Shell. This is a session-based private preview, not persistent hosting.
 
 **Desktop release and outstanding work:** [November 20 integration audit](docs/DESKTOP_RELEASE_AUDIT_2026-11-20.md). The desktop app is the primary editing product; the native Android Pocket APK is an intentionally limited companion, not desktop parity.

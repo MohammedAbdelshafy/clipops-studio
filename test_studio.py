@@ -146,6 +146,12 @@ class DeskTests(unittest.TestCase):
             result = json.loads(body)
             self.assertEqual(result['hook_source']['start'], 0)
             self.assertEqual(result['candidate_id'], 'c01')
+            card = result['editorial_skill_review']
+            self.assertEqual(card['skill_id'], 'clipops-editorial-intelligence')
+            self.assertTrue(card['requires_human_review'])
+            self.assertFalse(card['grants_export_approval'])
+            self.assertFalse(card['network_or_model_calls'])
+            self.assertIn('source_bounds', [row['key'] for row in card['checks']])
             self.assertEqual(self.request('GET', review_url.replace('/c01/', '/c99/'), **auth)[0], 404)
 
             proposal_url = f'/api/projects/{self.project_id}/propose'

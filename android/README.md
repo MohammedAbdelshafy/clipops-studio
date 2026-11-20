@@ -2,11 +2,11 @@
 
 The installable **ClipOps Studio** Android APK opens the **same complete web Studio** already used on the desktop, via private HTTPS endpoints and Chrome Custom Tabs. It retains the offline Pocket trim/editor underneath for disconnected operation.
 
-Choose LAPTOP (Tailscale Serve) or CLOUD (account-gated Google Cloud Shell) from inside the app. Use the exact private URL assigned by the provider, and ensure the corresponding Python/FFmpeg backend is already running. Host profiles are saved privately with no credentials, URL parameters or public services.
+Choose LAPTOP (Tailscale Serve), NO VPN (account-gated Microsoft Dev Tunnels), or CLOUD (account-gated Google Cloud Shell) from inside the app. The Microsoft route also requires a one-time pairing code from the trusted laptop and is **for small test videos only**: Microsoft documents a 5 GB/user/month bandwidth cap and 16 MB maximum request body. The existing 8 MiB ClipOps chunks fit the request cap, but **15–20 GB** footage does not fit the monthly cap. Use the exact private URL assigned by the provider, and ensure the corresponding Python/FFmpeg backend is already running. Host profiles are saved privately with no credentials, URL parameters or public services.
 
 **Important:** full capabilities are provided by the connected backend, not ported into this APK. This build does NOT implement cross-server project synchronization, automatic failover of renders, native on-device transcription or persistent public cloud service. Cloud Shell is a temporary test fallback for small files, not a paid/prod renderer. The native Pocket backup works offline and is still limited to 3-minute trims.
 
-For owner-only private laptop pairing and safe cloud setup, see [Hybrid Android Studio guide](../docs/HYBRID_ANDROID_STUDIO.md).
+For Tailscale-free private laptop testing, see [Microsoft Dev Tunnels setup](../docs/ANDROID_WITHOUT_TAILSCALE.md). For Tailscale and Cloud Shell setup, see [Hybrid Android Studio guide](../docs/HYBRID_ANDROID_STUDIO.md).
 
 ## Android test build
 
@@ -17,3 +17,5 @@ For owner-only private laptop pairing and safe cloud setup, see [Hybrid Android 
 - GitHub debug signing keys may change between test builds. For **subsequent hybrid builds with the same new app ID**, Android may require uninstalling the earlier hybrid test build. The original Pocket app remains separate and untouched; exported Gallery files remain separate from either app sandbox.
 
 No paid hosting, public deployment, account credential, asset migration or provider connection is created by installing the APK.
+
+**3D/skills review build:** Android v0.2.2 allows a second private Microsoft Dev Tunnel on port 8775 while the existing editor stays on 8765. The connected desktop Studio includes opt-in CSS 3D depth and offline editorial skill checks. Server pairing is still required. See [3D and desktop acceptance](../docs/CLIPOPS_3D_SKILLS_DESKTOP_ACCEPTANCE_20261120.md).

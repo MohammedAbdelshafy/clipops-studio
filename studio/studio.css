@@ -58,3 +58,38 @@
 @media(max-width:850px){.library-hero{grid-template-columns:minmax(0,1fr) 220px;padding:28px 23px}.hero-reels{transform:scale(.85);transform-origin:center}}
 @media(max-width:640px){.library-hero{display:block;padding:27px 23px}.library-hero h2{max-width:22ch;font-size:30px}.hero-reels{display:none}.cinema-stage{padding:10px 12px}.cinema-stage>.screen{height:clamp(220px,53vh,340px);min-height:200px}.monitor-actions .ambient-switch{margin-right:0}}
 @media(prefers-reduced-motion:reduce){.library-hero:before,.cinema-stage:before,.reel-card.reel-center{animation:none!important}.cinema-stage>.ambient-preview{display:none!important}}
+
+
+/* ClipOps dimensional editing UI — no external visual assets, no video/frame transforms. */
+.skill-evidence{margin-top:14px;padding:15px 16px;border:1px solid #cadbc0;border-left:4px solid #6e9f53;border-radius:10px;background:linear-gradient(155deg,#f9fcf5,#edf6e8)}
+.skill-evidence h3{font-size:15px}
+.skill-evidence .rationale{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:0;margin:12px 0 0;list-style:none}
+.skill-evidence li{margin:0;padding:10px 12px;border:1px solid #d8e5d2;border-radius:9px;background:#fff;color:#334332}
+.skill-evidence li strong{color:#274323}
+.skill-evidence .hint{display:block;margin-top:6px}
+
+/* Perspective is deliberately decorative: edit controls, footage and captions do not move. */
+html.depth-on .library-hero{--depth-rx:0deg;--depth-ry:0deg;transform-style:preserve-3d}
+html.depth-on .hero-reels{perspective:920px;transform-style:preserve-3d;transform:rotateX(var(--depth-rx)) rotateY(var(--depth-ry));transition:transform .18s cubic-bezier(.2,.8,.2,1);will-change:transform}
+html.depth-on .reel-card{transform-style:preserve-3d;backface-visibility:hidden;transition:filter .2s ease,box-shadow .2s ease}
+html.depth-on .reel-card span,html.depth-on .reel-card b{transform:translateZ(14px);position:relative}
+html.depth-on .reel-card.reel-left{transform:rotateY(23deg) rotateZ(-12deg) translate3d(-8px,6px,-22px)}
+html.depth-on .reel-card.reel-right{transform:rotateY(-22deg) rotateZ(13deg) translate3d(9px,7px,-15px)}
+html.depth-on .reel-card.reel-center{animation:depth-reel-float 8s ease-in-out infinite;box-shadow:0 24px 48px #0009,0 0 32px #b7eba624}
+html.depth-on .library-hero:hover .reel-left{filter:brightness(.95)}
+html.depth-on .library-hero:hover .reel-right{filter:brightness(1)}
+html.depth-on .library-table .list-row{transition:transform .16s ease,box-shadow .16s ease;transform:translateZ(0)}
+html.depth-on .library-table .list-row:hover{transform:translate3d(0,-2px,0);box-shadow:0 12px 20px #12322313}
+html.depth-on .monitor{box-shadow:0 20px 45px #0b211e19}
+html.depth-on .monitor:hover{box-shadow:0 28px 58px #0b211e24}
+@keyframes depth-reel-float{
+  0%,100%{transform:translate3d(0,0,15px) rotateX(4deg) rotateY(-8deg) rotateZ(2deg)}
+  50%{transform:translate3d(0,-9px,23px) rotateX(-3deg) rotateY(7deg) rotateZ(-1deg)}
+}
+@media(max-width:900px){
+  .depth-toggle{display:none!important}
+  .skill-evidence .rationale{grid-template-columns:1fr}
+}
+@media(hover:none),(pointer:coarse),(prefers-reduced-motion:reduce){
+  html.depth-on .hero-reels,html.depth-on .reel-card,html.depth-on .library-table .list-row{animation:none!important;transition:none!important;transform:none!important}
+}

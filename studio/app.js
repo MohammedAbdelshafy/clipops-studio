@@ -205,6 +205,7 @@ function creativeReview() {
   const hook = pack?.hook_source;
   const quotes = (pack?.quote_bank || []).map(q => '<li><strong>'+clock(q.start)+'–'+clock(q.end)+'</strong> · <span dir="auto">'+escapeText(q.verbatim)+'</span>'+(q.speaker ? ' <small>('+escapeText(q.speaker)+')</small>' : '')+'</li>').join('');
   const warnings = (pack?.warnings || []).map(w => '<li>'+escapeText(w)+'</li>').join('');
+  const skillChecks = (pack?.editorial_skill_review?.checks || []).map(check => '<li><strong>'+escapeText(check.label)+'</strong> · '+escapeText(String(check.status).replace(/_/g, ' '))+'<p class="hint">'+escapeText(check.detail)+'</p></li>').join('');
   const momentMatches = (state.moments?.matches || []).map((m,i) =>
     '<li><strong>'+clock(m.start)+'–'+clock(m.end)+'</strong> · <span dir="auto">'+escapeText(m.verbatim)+'</span>'
     + '<p class="hint">Matched: '+escapeText(m.matched_terms.join(', '))+' · source token match '+escapeText(m.match_score)+'/100 (not viral score)'+'</p>'
@@ -231,6 +232,7 @@ function creativeReview() {
       + (hook ? '<small class="hint">Source: '+clock(hook.start)+'–'+clock(hook.end)+'. Editorial suggestion only.</small>' : '')
       + '<h3>Verbatim quote bank</h3>'+(quotes ? '<ul class="rationale">'+quotes+'</ul>' : '<p class="hint">No suitable quotes found.</p>')
       + '<h3>Manual editorial checks</h3>'+(warnings ? '<ul class="rationale">'+warnings+'</ul>' : '<p class="hint">Still review story, facts, audio and caption quality.</p>')
+      + (pack.editorial_skill_review ? '<section class="skill-evidence"><h3>Editorial skill checks</h3><p class="hint">Offline structural evidence, not a virality score. Visual quality, rights and final output always require human review.</p><ul class="rationale">'+skillChecks+'</ul></section>' : '')
       + (pack.possible_profanity.length ? '<p class="hint">Review words: '+escapeText(pack.possible_profanity.join(', '))+'</p>' : '')
       + '</section>' : '')
     + '<form id="creative-form"><label class="field wide">Preview an edit instruction'
@@ -262,6 +264,59 @@ function drawTab() {
   for (const tab of document.querySelectorAll('[data-tab]')) tab.setAttribute('aria-pressed', String(tab.dataset.tab === state.tab));
   area.innerHTML = ({details,captions,creative:creativeReview,settings,review})[state.tab]();
 }
+/* ClipOps 3D depth: UI-only, no media manipulation and no network. */
+const DEPTH_QUERY = '(min-width: 901px) and (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference)';
+let depthEnabled = true;
+try { depthEnabled = localStorage.getItem('clipops-depth-motion') !== 'off'; }
+catch { /* Private mode works without persistent settings. */ }
+
+function depthAllowed() {
+  return window.matchMedia(DEPTH_QUERY).matches && !navigator.connection?.saveData;
+}
+function syncDepth() {
+  const active = Boolean(depthEnabled && depthAllowed() && !document.hidden);
+  document.documentElement.classList.toggle('depth-on', active);
+  const toggle = document.querySelector('[data-action="depth"]');
+  if (toggle) {
+    toggle.disabled = !depthAllowed();
+    toggle.setAttribute('aria-pressed', String(active));
+    toggle.setAttribute('aria-label', active ? 'Disable 3D depth motion' : 'Enable 3D depth motion');
+    toggle.title = !depthAllowed()
+      ? '3D depth is disabled for touch, compact screens, data saving, or reduced-motion preferences.'
+      : 'Decorative depth only. Original footage, timing and exports are unchanged.';
+  }
+}
+let depthFrame = null, pendingDepth = null;
+document.addEventListener('pointermove', event => {
+  if (!document.documentElement.classList.contains('depth-on') || !(event.target instanceof Element)) return;
+  const hero = event.target.closest('.library-hero');
+  if (!hero) return;
+  pendingDepth = {hero, x:event.clientX, y:event.clientY};
+  if (depthFrame !== null) return;
+  depthFrame = requestAnimationFrame(() => {
+    depthFrame = null;
+    const point = pendingDepth;
+    if (!point || !point.hero.isConnected) return;
+    const bounds = point.hero.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+    const x = Math.max(-1, Math.min(1, 2 * (point.x - bounds.left) / bounds.width - 1));
+    const y = Math.max(-1, Math.min(1, 2 * (point.y - bounds.top) / bounds.height - 1));
+    point.hero.style.setProperty('--depth-ry', (x * 7).toFixed(2) + 'deg');
+    point.hero.style.setProperty('--depth-rx', (-y * 4).toFixed(2) + 'deg');
+  });
+}, {passive:true});
+document.addEventListener('pointerout', event => {
+  if (!(event.target instanceof Element)) return;
+  const hero = event.target.closest('.library-hero');
+  if (hero && (!event.relatedTarget || !hero.contains(event.relatedTarget))) {
+    pendingDepth = null;
+    if (depthFrame !== null) cancelAnimationFrame(depthFrame);
+    depthFrame = null;
+    hero.style.removeProperty('--depth-rx');
+    hero.style.removeProperty('--depth-ry');
+  }
+});
+
 function motionAllowed() {
   return !window.matchMedia('(prefers-reduced-motion: reduce)').matches &&
     !window.matchMedia('(max-width: 640px)').matches && !navigator.connection?.saveData;
@@ -677,6 +732,13 @@ document.addEventListener('click', async event => {
       video.play().catch(notifyError); return;
     }
     switch (node.dataset.action) {
+      case 'depth':
+        if (!depthAllowed()) break;
+        depthEnabled = !depthEnabled;
+        try { localStorage.setItem('clipops-depth-motion', depthEnabled ? 'on' : 'off'); }
+        catch { /* Preference stays in memory only. */ }
+        syncDepth();
+        break;
       case 'fallbacks': await showFreeFallbacks(); break;
       case 'ambient':
         state.ambient = !state.ambient;
@@ -755,6 +817,9 @@ document.addEventListener('change', event => {
 });
 window.addEventListener('hashchange',() => route().catch(notifyError));
 window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change',syncAmbient);
+window.matchMedia(DEPTH_QUERY).addEventListener('change',syncDepth);
+document.addEventListener('visibilitychange',syncDepth);
+syncDepth();
 window.matchMedia('(max-width: 640px)').addEventListener('change',syncAmbient);
 document.addEventListener('visibilitychange', () => {
   const background = document.querySelector('.ambient-preview');

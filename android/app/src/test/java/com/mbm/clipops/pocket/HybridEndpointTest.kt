@@ -13,6 +13,32 @@ class HybridEndpointTest {
                 HybridEndpoint.Engine.CLOUD))
     }
 
+
+    @Test fun acceptsOnlyMicrosoftPrivateDevTunnelHostnames() {
+        assertEquals("https://cl7opsa-8765.usw2.devtunnels.ms/",
+            HybridEndpoint.validated("https://cl7opsa-8765.usw2.devtunnels.ms",
+                HybridEndpoint.Engine.DEV_TUNNEL))
+        assertEquals("https://cl7opsa-8775.usw2.devtunnels.ms/",
+            HybridEndpoint.validated("https://cl7opsa-8775.usw2.devtunnels.ms",
+                HybridEndpoint.Engine.DEV_TUNNEL))
+        listOf(
+            "https://cl7opsa-8765.usw2.devtunnels.ms.evil.net",
+            "http://cl7opsa-8765.usw2.devtunnels.ms",
+            "https://cl7opsa-8765.usw2.devtunnels.ms:8765",
+            "https://cl7opsa-8765.usw2.devtunnels.ms?token=abc",
+            "https://cl7opsa-8765-inspect.usw2.devtunnels.ms",
+            "https://cl7opsa-99.usw2.devtunnels.ms",
+            "https://cl7opsa-65001.usw2.devtunnels.ms",
+            "https://cl7opsa-8765.usw2.devtunnels.ms/path",
+            "https://cl7opsa-8765.usw2.devtunnels.ms#frag"
+        ).forEach { value ->
+            try {
+                HybridEndpoint.validated(value, HybridEndpoint.Engine.DEV_TUNNEL)
+                throw AssertionError("Untrusted dev tunnel accepted: $value")
+            } catch (_: IllegalArgumentException) { }
+        }
+    }
+
     @Test fun deniesPublicAndTokenBearingEndpoints() {
         listOf(
             "http://laptop.my-tailnet.ts.net",
