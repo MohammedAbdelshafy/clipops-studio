@@ -6,7 +6,7 @@ itself continues to bind exclusively to loopback and retains cookie/CSRF gates.
 from __future__ import annotations
 import re
 
-_LABEL = re.compile(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\Z')
+_LABEL = re.compile(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z')
 
 
 def cloud_shell_origin(port: int, web_host: str) -> str:
