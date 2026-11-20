@@ -17,3 +17,5 @@ For Tailscale-free private laptop testing, see [Microsoft Dev Tunnels setup](../
 - GitHub debug signing keys may change between test builds. For **subsequent hybrid builds with the same new app ID**, Android may require uninstalling the earlier hybrid test build. The original Pocket app remains separate and untouched; exported Gallery files remain separate from either app sandbox.
 
 No paid hosting, public deployment, account credential, asset migration or provider connection is created by installing the APK.
+
+**3D/skills review build:** Android v0.2.2 allows a second private Microsoft Dev Tunnel on port 8775 while the existing editor stays on 8765. The connected desktop Studio includes opt-in CSS 3D depth and offline editorial skill checks. Server pairing is still required. See [3D and desktop acceptance](../docs/CLIPOPS_3D_SKILLS_DESKTOP_ACCEPTANCE_20261120.md).
