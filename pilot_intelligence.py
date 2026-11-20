@@ -175,10 +175,13 @@ def _candidate(group, frequency, audience, min_seconds, max_seconds, next_turn=N
     story_break = bool(next_turn and re.search(r'[?؟]$', next_turn['text']))
     coverage = min(1.0, sum(s['end'] - s['start'] for s in group) / span)
     closure = bool(PUNCT_END.search(last['text'])) and last['text'].rstrip()[-1] not in '?؟'
-    lead_in = any(opening.startswith(x) for x in (' and so ', ' and then ', ' that one ', ' وده ', ' ودي '))
+    lead_in = any(opening.startswith(x) for x in (
+        ' and so ', ' and then ', ' that one ', ' so on the ', ' as i mentioned ',
+        ' like i said ', ' as we discussed ', ' وده ', ' ودي ', ' زي ما قولنا '))
+    unfinished = tokens[-1] in {'and', 'or', 'but', 'because', 'علشان', 'عشان', 'لكن', 'او'}
     target = min(max_seconds, max(min_seconds, 29))
     components = {
-        'structure': 14 + 8 * closure - 7 * lead_in,
+        'structure': 14 + 8 * closure - 9 * lead_in - 7 * unfinished,
         'focused_exchange': 5 * answered + 4 * (story_break and closure) - 5 * max(0, questions - 1),
         'signals': min(30, 8 * len(signals)),
         'speech_coverage': round(14 * coverage),
@@ -199,6 +202,8 @@ def _candidate(group, frequency, audience, min_seconds, max_seconds, next_turn=N
         rationale.append(f'Transcript markers match the {audience} brief.')
     if lead_in:
         rationale.append('Opening refers back to earlier context. Review the preceding sentence.')
+    if unfinished:
+        rationale.append('The last words suggest a continued thought. Review the next sentence.')
     # Across the whole transcript, downweight terms that recur in many turns.
     # Preserve the speaker's words in title and copy so facts remain traceable.
     topics = sorted(terms, key=lambda t: (frequency[t], -len(t), t))[:5]

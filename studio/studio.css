@@ -8,3 +8,7 @@
 .cut-suggestion { display: flex; gap: 1rem; align-items: center; justify-content: space-between; padding: .7rem 0; }
 .cut-suggestion button { flex: 0 0 auto; }
 #cuts-form .form-footer { margin-top: 1rem; }
+
+.monitor-actions { display:flex; flex-wrap:wrap; gap:.4rem; padding:.5rem .8rem; background:#222c24; }
+.monitor-actions .button { color:#e8eee5; background:#27352a; border-color:#435547; min-height:32px; padding:.28rem .65rem; }
+.monitor-actions .button:hover { background:#374a3c; }

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Exercise the real local desk with the generated, authorized studio fixture pair."""
 import argparse
+from base64 import b64encode
+from hashlib import sha256
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -18,6 +21,9 @@ def seek_preview(page, seconds):
     # Execute as a callable through the locator instead of altering the desk's CSP.
     assert page.locator('#video').evaluate('''async (video, seconds) => {
         const deadline = performance.now() + 10000;
+        while (performance.now() < deadline && video.readyState === 0) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
         video.currentTime = seconds;
         while (performance.now() < deadline) {
             if (video.readyState >= 2 && Math.abs(video.currentTime - seconds) < .12) return true;
@@ -35,6 +41,7 @@ def main():
     args = parser.parse_args()
     args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='clipops-desk-test-') as tmp, DeskServer(0, Path(tmp), pilot) as server, sync_playwright() as playwright:
+        server.upload_store.chunk = 256 * 1024
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         browser = playwright.chromium.launch(executable_path=args.chromium, headless=True, args=['--disable-dev-shm-usage'])
@@ -53,10 +60,34 @@ def main():
             form.locator('[name="transcript"]').set_input_files(str(args.fixtures/'studio.json'))
             form.locator('[name="count"]').fill('0')
             form.locator('[name="rights"]').check()
+            # Simulate a prior browser session with a successfully committed first chunk.
+            source = args.fixtures/'studio.mp4'
+            upload_id = 'e' * 32
+            session = ctx.request.get(url + '/api/session').json()
+            headers = {'Origin':url,'X-ClipOps-CSRF':session['csrf'],'Tus-Resumable':'1.0.0'}
+            metadata = {'filename':source.name,'name':'The editing room','rights':True,'render_count':0,
+                        'transcript':json.loads((args.fixtures/'studio.json').read_text())}
+            created = ctx.request.post(url + '/api/uploads', headers=headers,
+                                       data={'id':upload_id,'size':source.stat().st_size,'metadata':metadata})
+            assert created.status == 201, created.text()
+            with source.open('rb') as stream:
+                block = stream.read(session['chunk_bytes'])
+            uploader = url + created.headers['location']
+            part = ctx.request.patch(uploader,data=block,headers={**headers,'Upload-Offset':'0',
+                'Content-Type':'application/offset+octet-stream',
+                'Upload-Checksum':'sha256 '+b64encode(sha256(block).digest()).decode()})
+            assert part.status == 204
+            form.locator('[name="video"]').evaluate('async (field,id) => localStorage.setItem(await fileKey(field.files[0]),id)', upload_id)
+            page.reload()
+            page.get_by_role('button',name='Import project').first.click()
+            form = page.locator('#import-form')
+            form.locator('[name="video"]').set_input_files(str(source))
+            form.locator('[name="rights"]').check()
             form.get_by_role('button',name='Import & process').click()
             expect(page.get_by_role('heading',name='The editing room', exact=True)).to_be_visible(timeout=30000)
             expect(page.locator('[data-clip]').first).to_be_visible(timeout=30000)
             job = page.url.split('/')[-1]
+            assert job == upload_id
             clip = page.locator('[data-clip]').first.get_attribute('data-clip')
             print('Browser import and candidate selection passed', flush=True)
             page.get_by_role('button',name='Transcript & captions').click()
@@ -86,11 +117,19 @@ def main():
             page.get_by_label('Reviewed source intervals').fill('3.45, 3.67')
             page.get_by_role('button',name='Save reviewed cuts').click()
             expect(page.get_by_role('status').last).to_have_text('Reviewed cuts saved.')
+            page.get_by_role('button',name='Edit punch-ins').click()
+            page.get_by_label('Timed punch-ins').fill('4.2, 6.0, 1.08')
+            page.get_by_role('button',name='Save punch-ins').click()
+            expect(page.get_by_role('status').last).to_have_text('Punch-ins saved.')
             page.get_by_role('button',name='Render batch').click()
             page.get_by_role('button',name='Render selected clips').click()
             expect(page.locator('#dialog')).not_to_be_visible()
             expect(page.locator('.monitor-head')).to_contain_text('Rendered preview',timeout=150000)
             assert abs(float(page.locator('#scrub').get_attribute('max')) - 7.45) < .06
+            page.get_by_role('button',name='View source').click()
+            expect(page.locator('.monitor-head')).to_contain_text('Source preview')
+            page.get_by_role('button',name='View render').click()
+            expect(page.locator('.monitor-head')).to_contain_text('Rendered preview')
             seek_preview(page, 2.2)
             page.evaluate('window.scrollTo(0, 0)')
             page.screenshot(path=str(args.screenshots/'studio-desktop.png'))

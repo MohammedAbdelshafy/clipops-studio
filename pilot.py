@@ -15,6 +15,7 @@ import re
 import resource
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -24,7 +25,7 @@ import pilot_edit
 import pilot_intelligence
 import pilot_qc
 
-MAX_MEDIA = 8 * 1024**3
+MAX_MEDIA = pilot_qc.MAX_SOURCE_BYTES
 MAX_TRANSCRIPT = 24 * 1024**2
 SUFFIXES = {".mp4", ".mov", ".mkv", ".webm"}
 ARTIFACTS = {"preview": "clip.mp4", "export": "clip.mp4", "srt": "clip.srt", "vtt": "clip.vtt"}
@@ -108,8 +109,17 @@ def save_json(path, data):
             raise
     try:
         os.replace(tmp, path)
+        sync_directory(path.parent)
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def sync_directory(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def load_json(path, maximum=None):
@@ -136,7 +146,7 @@ def copy_media(source, dest):
     with source.open("rb") as incoming, dest.open("xb") as output:
         size = os.fstat(incoming.fileno()).st_size
         if not 0 < size <= MAX_MEDIA or not stat.S_ISREG(os.fstat(incoming.fileno()).st_mode):
-            raise ValueError("Source must be a regular media file of 1 byte to 8 GiB")
+            raise ValueError("Source must be a regular media file of 1 byte to 20 GiB")
         if shutil.disk_usage(dest.parent).free < size + 64 * 1024**2:
             raise ValueError("Insufficient space for a private media copy and working files")
         os.chmod(dest, 0o600)
@@ -151,6 +161,35 @@ def copy_media(source, dest):
         if copied != size:
             raise ValueError("Source changed during intake")
         return digest.hexdigest()
+
+
+def file_identity(path):
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    fd = os.open(path, flags)
+    try:
+        info = os.fstat(fd)
+    finally:
+        os.close(fd)
+    if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= MAX_MEDIA:
+        raise ValueError("Choose a regular local video up to 20 GiB")
+    return [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns]
+
+
+def project_source(directory, state):
+    reference = state.get("source_reference")
+    if not reference:
+        path = directory / state["source_file"]
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("Source is unavailable")
+        return path
+    path = Path(reference["path"])
+    try:
+        unchanged = file_identity(path) == reference["identity"]
+    except (OSError, ValueError):
+        unchanged = False
+    if not unchanged:
+        raise ValueError("The referenced original changed or moved. Import the new source as a project.")
+    return path
 
 
 def checked_segments(rows, duration, previous=()):
@@ -223,7 +262,8 @@ def store_segments(directory, rows):
 def create_project(source, root, *, transcript=None, model=None, rights=False, style="podcast",
                    platform="shorts", audience="general", limit=24, render_count=5, language=None,
                    name=None, job_id=None, resolution=1080, framing="contain", brand=None,
-                   speaker_positions=None, speaker_tracks=None, speaker_model=None, cleanup=False, push_in=False):
+                   speaker_positions=None, speaker_tracks=None, speaker_model=None, cleanup=False, push_in=False,
+                   reference=False, staged_upload=False):
     if rights is not True:
         raise ValueError("Confirm processing rights for this source before intake")
     if transcript is None and model is None:
@@ -246,18 +286,36 @@ def create_project(source, root, *, transcript=None, model=None, rights=False, s
         if not speaker_model.is_file():
             raise ValueError("Speaker model must be a local ONNX file")
     media = Path(source).expanduser()
-    if not media.is_file() or media.suffix.lower() not in SUFFIXES:
+    if media.is_symlink() or not media.is_file() or media.suffix.lower() not in SUFFIXES:
         raise ValueError("Choose a local MP4, MOV, MKV or WebM file")
     job_id = uuid4().hex if job_id is None else job_id
     if not isinstance(job_id, str) or not PROJECT_ID.fullmatch(job_id):
         raise ValueError("Invalid project ID")
     root = private_root(root)
+    media = media.resolve(strict=True)
+    original_identity = file_identity(media)
+    if reference and staged_upload:
+        raise ValueError("Choose a local reference or a completed upload")
+    if staged_upload and media.parent != root / ".uploads" / job_id:
+        raise ValueError("Upload must be committed in this workspace")
     with tempfile.TemporaryDirectory(dir=root, prefix=".intake-") as staging:
         directory = Path(staging) / "project"
         directory.mkdir(mode=0o700)
         file_name = "input" + media.suffix.lower()
-        source_hash = copy_media(media, directory / file_name)
-        info = pilot_qc.validate_source(directory / file_name)
+        source_path = directory / file_name
+        source_reference = None
+        if reference:
+            source_path = media
+            source_reference = {"path": str(media), "identity": original_identity}
+            source_hash = None
+        elif staged_upload:
+            os.link(media, source_path, follow_symlinks=False)
+            source_hash = sha256(source_path)
+        else:
+            source_hash = copy_media(media, source_path)
+        info = pilot_qc.validate_source(source_path)
+        if reference and file_identity(media) != original_identity:
+            raise ValueError("The original changed while opening")
         if not info.get("has_audio"):
             raise ValueError("Speech clipping requires a source audio stream")
         source_info = {key: info[key] for key in ("duration", "dimensions", "streams", "container", "mime",
@@ -265,7 +323,8 @@ def create_project(source, root, *, transcript=None, model=None, rights=False, s
         source_info.update(name=clean_text(media.name, "Filename", 255), sha256=source_hash)
         stamp = now()
         state = {"id": job_id, "name": clean_text(name or media.stem, "Project name", 140),
-                 "created_at": stamp, "source": source_info, "source_file": file_name, **prefs,
+                 "created_at": stamp, "source": source_info, "source_file": file_name,
+                 "source_reference": source_reference, **prefs,
                  "audience": audience, "limit": limit, "render_count": render_count, "language": language,
                  "processing_rights": True, "speaker_tracks": speaker_tracks or {}, "cleanup": cleanup,
                  "push_in": push_in,
@@ -282,6 +341,7 @@ def create_project(source, root, *, transcript=None, model=None, rights=False, s
         save_state(directory, state)
         # rename refuses to replace an existing populated project, including ID races.
         directory.rename(root / job_id)
+        sync_directory(root)
     return job_id
 
 
@@ -313,7 +373,7 @@ def get_project(root, job_id):
         except (ValueError, FileNotFoundError):
             if attempt:
                 raise
-    for key in ("source_file", "model_path", "speaker_model_path"):
+    for key in ("source_file", "model_path", "speaker_model_path", "source_reference"):
         state.pop(key, None)
     for clip in state["candidates"]:
         for key in ("bundle", "hashes"):
@@ -355,11 +415,12 @@ def edit_project(root, job_id, **updates):
     directory = project_dir(root, job_id)
     fields = {"segments", "style", "platform", "brand", "framing", "resolution", "speaker_positions",
               "candidate_id", "title", "description", "cta", "start", "end", "editor", "audience", "rerank",
-              "cleanup", "push_in", "remove_ranges"}
+              "cleanup", "push_in", "remove_ranges", "punch_ins"}
     if set(updates) - fields:
         raise ValueError("Unknown project edit")
     with lock(directory, ".worker"):
         state = load_json(directory / PROJECT_FILE)
+        original = json.dumps(state, sort_keys=True)
         key_settings = ("style", "platform", "resolution", "framing", "brand", "speaker_positions")
         new = settings(*(updates.get(key, state[key]) for key in key_settings))
         for key in ("cleanup", "push_in"):
@@ -386,7 +447,7 @@ def edit_project(root, job_id, **updates):
         audience = clean_text(updates.get("audience", state["audience"]), "Audience", 80)
         if audience != state["audience"] or updates.get("rerank") is True:
             state.update(audience=audience, ranked=False, candidates=[], status="queued", stage="ranking", progress=0)
-        clip_fields = {"title", "description", "cta", "start", "end", "editor", "remove_ranges"} & updates.keys()
+        clip_fields = {"title", "description", "cta", "start", "end", "editor", "remove_ranges", "punch_ins"} & updates.keys()
         if clip_fields:
             clip = candidate(state, updates.get("candidate_id"))
             a = number(updates.get("start", clip["start"]), "clip start")
@@ -396,7 +457,7 @@ def edit_project(root, job_id, **updates):
             if (a, b) != (clip["start"], clip["end"]):
                 rows = load_json(directory / state["transcript_file"])
                 clip.update(start=a, end=b, selection_edited=True, preview=excerpt(rows, a, b)[:300],
-                            remove_ranges=[])
+                            remove_ranges=[], punch_ins=[])
                 approval_reset(clip, True)
             if "remove_ranges" in updates:
                 cuts = updates["remove_ranges"]
@@ -407,12 +468,25 @@ def edit_project(root, job_id, **updates):
                 if cuts != clip.get("remove_ranges", []):
                     clip.update(remove_ranges=cuts, selection_edited=True)
                     approval_reset(clip, True)
+            if "punch_ins" in updates or "remove_ranges" in updates:
+                punch_ins = updates.get("punch_ins", clip.get("punch_ins", []))
+                ranges = pilot_edit._keep_ranges(a, b, clip.get("remove_ranges", []))
+                pilot_edit.punch_in_plan(punch_ins, ranges)
+                if punch_ins != clip.get("punch_ins", []):
+                    clip["punch_ins"] = punch_ins
+                    approval_reset(clip, True)
             for key, limit in (("title", 240), ("description", 2000), ("cta", 500), ("editor", 100)):
                 if key in updates:
                     value = clean_text(updates[key], key, limit, required=key == "title")
                     if value != clip.get(key):
                         clip[key] = value
                         approval_reset(clip, False)
+        if json.dumps(state, sort_keys=True) != original:
+            entry = {"at": now(), "candidate": updates.get("candidate_id"),
+                     "fields": sorted(updates.keys() - {"candidate_id"})}
+            if clip_fields:
+                entry["selection"] = {key: clip[key] for key in ("start", "end", "remove_ranges", "punch_ins") if key in clip}
+            state["edits"] = (state.get("edits", []) + [entry])[-100:]
         save_state(directory, state)
         housekeep(directory, state)
     return get_project(root, job_id)
@@ -447,13 +521,52 @@ def get_media_path(root, job_id, clip_id=None, kind="preview"):
     directory = project_dir(root, job_id)
     state = load_json(directory / PROJECT_FILE)
     if kind == "source" and clip_id is None:
-        path = directory / state["source_file"]
-        if path.is_symlink() or not path.is_file():
-            raise ValueError("Source is unavailable")
-        return path
+        source = project_source(directory, state)
+        proxy = directory / "source-preview.mp4"
+        return proxy if state.get("proxy_ready") and proxy.is_file() and not proxy.is_symlink() else source
     if kind not in ARTIFACTS:
         raise ValueError("Unknown media type")
     return approved_media(directory, candidate(state, clip_id), kind)
+
+
+def generate_proxy(root, job_id):
+    """Create an optional browser proxy without changing or copying the original container."""
+    directory = project_dir(root, job_id)
+    with lock(directory.parent, ".render-worker"), lock(directory, ".worker"):
+        state = load_json(directory / PROJECT_FILE)
+        source = project_source(directory, state)
+        out = directory / "source-preview.mp4"
+        if state.get("proxy_ready") and out.is_file() and not out.is_symlink():
+            return
+        status, stage, progress = (state[k] for k in ("status", "stage", "progress"))
+        state.update(status="processing", stage="building browser preview", progress=0)
+        save_state(directory, state)
+        try:
+            with tempfile.TemporaryDirectory(prefix=".proxy-", dir=directory) as tmp:
+                preview = Path(tmp) / "source.mp4"
+                command = ["ffmpeg", "-hide_banner", "-v", "error", "-nostdin", "-xerror", "-max_alloc", "268435456",
+                           *pilot_qc.MEDIA_INPUT_OPTIONS, "-i", str(source), "-map", "0:V:0", "-map", "0:a:0",
+                           "-vf", "scale=w='min(960,iw)':h='min(540,ih)':force_original_aspect_ratio=decrease:"
+                                  "force_divisible_by=2,format=yuv420p",
+                           "-map_metadata", "-1", "-map_chapters", "-1", "-c:v", "libx264", "-threads:v", "2",
+                           "-preset", "veryfast", "-crf", "25", "-c:a", "aac", "-b:a", "96k",
+                           "-movflags", "+faststart", str(preview)]
+                result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+                                        timeout=max(90, state["source"]["duration"] * 3))
+                if result.returncode:
+                    raise ValueError("FFmpeg could not build a browser preview for this source")
+                info = pilot_qc.validate_source(preview)
+                if abs(info["duration"] - state["source"]["duration"]) > .25:
+                    raise ValueError("The preview duration differs from the source")
+                project_source(directory, state)
+                os.chmod(preview, 0o600)
+                os.replace(preview, out)
+            state["proxy_ready"] = True
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("Building the browser preview timed out") from exc
+        finally:
+            state.update(status=status, stage=stage, progress=progress)
+            save_state(directory, state)
 
 
 def review_clip(root, job_id, clip_id, decision, editor, rights=False):
@@ -520,11 +633,14 @@ def render_candidate(directory, state, rows, clip):
         part = Path(tmp) / "bundle"
         part.mkdir(mode=0o700)
         out = part / "clip.mp4"
-        rendered = pilot_edit.render(directory / state["source_file"], out, clip["start"], clip["end"],
+        source = project_source(directory, state)
+        rendered = pilot_edit.render(source, out, clip["start"], clip["end"],
                                      rows, state["style"], state["platform"], resolution=state["resolution"],
                                      framing=state["framing"], brand=state["brand"],
                                      speaker_positions=state["speaker_positions"], cleanup=state.get("cleanup", False),
-                                     remove_ranges=clip.get("remove_ranges"), push_in=state.get("push_in", False))
+                                     remove_ranges=clip.get("remove_ranges"),
+                                     push_in=state.get("push_in", False) and not clip.get("punch_ins"),
+                                     punch_ins=clip.get("punch_ins"))
         fingerprints = [(other.get("qc") or {}).get("evidence", {}).get("decoded_media_sha256")
                         for other in state["candidates"] if other is not clip and other["review"] != "rejected"
                         and (other.get("qc") or {}).get("passed")]
@@ -534,13 +650,14 @@ def render_candidate(directory, state, rows, clip):
         distinct = unique_selection(state, rows, clip)
         qc["checks"]["distinct_source_selection"] = distinct
         qc["passed"] = bool(qc["passed"] and distinct)
+        project_source(directory, state)
         hashes = {name: sha256(part / name) for name in set(ARTIFACTS.values())}
         name = f"render-{clip['id']}-{uuid4().hex}"
         part.rename(directory / name)
         approval_reset(clip, True)
         fields = ("dimensions", "source_dimensions", "upscaled", "framing", "duration", "resolution",
                   "style", "platform", "warnings", "caption_mode", "framing_reason", "encoder", "audio",
-                  "retained_source_ranges", "push_in", "has_audio", "foreground_scale",
+                  "retained_source_ranges", "push_in", "punch_ins", "has_audio", "foreground_scale",
                   "framing_applied", "framing_details", "caption_layout", "source_detail")
         clip.update(rendered=True, bundle=name, hashes=hashes, qc=qc,
                     render={**{k: rendered[k] for k in fields if k in rendered},
@@ -589,8 +706,9 @@ def process_project(root, job_id, render_count=None, clip_ids=None, model=None, 
                     options["speaker_tracks"] = {int(k): v for k, v in state["speaker_tracks"].items()}
                 if state.get("speaker_model_path"):
                     options["speaker_model"] = Path(state["speaker_model_path"])
-                result = pilot_intelligence.transcribe_local(directory / state["source_file"], Path(local_model),
+                result = pilot_intelligence.transcribe_local(project_source(directory, state), Path(local_model),
                                                              directory / "asr", **options)
+                project_source(directory, state)
                 rows = checked_segments(result["segments"], state["source"]["duration"])
                 state["transcript_file"] = store_segments(directory, rows)
                 state["transcription"] = {k: result[k] for k in ("language", "languages", "speaker_method",
@@ -687,6 +805,7 @@ def cli(argv=None):
     run.add_argument("--language", default=None)
     run.add_argument("--name")
     run.add_argument("--rights-confirmed", action="store_true")
+    run.add_argument("--reference", action="store_true", help="Read the unchanged local original without copying it")
     run.add_argument("--style", choices=pilot_edit.STYLES, default="podcast")
     run.add_argument("--platform", choices=pilot_edit.PLATFORMS, default="shorts")
     run.add_argument("--framing", choices=("contain", "crop", "faces", "speaker", "split"), default="contain")
@@ -736,6 +855,7 @@ def cli(argv=None):
         if opts.command == "run":
             job = create_project(
                 opts.source, opts.root, transcript=opts.transcript, model=opts.model, rights=opts.rights_confirmed,
+                reference=opts.reference,
                 language=opts.language, name=opts.name, style=opts.style, platform=opts.platform, audience=opts.audience,
                 limit=opts.candidates, render_count=opts.render_count, resolution=opts.resolution,
                 framing=opts.framing, brand=load_json(opts.brand, 8192) if opts.brand else None,

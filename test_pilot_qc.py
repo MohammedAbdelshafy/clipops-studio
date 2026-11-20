@@ -64,7 +64,7 @@ class PilotQualityTests(unittest.TestCase):
                 self.assertFalse(self.inspect(path)["passed"])
         with (self.root / "sparse.mp4").open("wb") as f:
             f.truncate(qc.MAX_SOURCE_BYTES + 1)
-        with self.assertRaisesRegex(ValueError, "8 GiB"):
+        with self.assertRaisesRegex(ValueError, "20 GiB"):
             qc.validate_source(self.root / "sparse.mp4")
 
     def test_truncated_faststart_payload_fails_full_report(self):

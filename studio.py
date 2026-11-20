@@ -17,10 +17,12 @@ import tempfile
 import threading
 from urllib.parse import urlsplit
 
+from studio_uploads import UploadStore, UploadError, TUS, EMPTY_RECEIPT, expires, checksum
+
 ASSETS = Path(__file__).resolve().parent / 'studio'
 STATIC = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
           '/studio.css': ('studio.css', 'text/css; charset=utf-8'), '/Inter-latin.woff2': ('Inter-latin.woff2', 'font/woff2')}
-MAX_MEDIA = 6 * 1024**3
+LEGACY_MEDIA = 6 * 1024**3
 MAX_JSON = 16 * 1024**2
 ID = r'[0-9a-f]{32}'
 CLIP = r'c[0-9]{2,4}'
@@ -29,9 +31,9 @@ MEDIA_TYPES = {'.mp4': 'video/mp4', '.mov': 'video/quicktime', '.mkv': 'video/x-
 VIDEO_TYPES = {key: value for key, value in MEDIA_TYPES.items() if key not in ('.srt', '.vtt')}
 PUBLIC_FIELDS = ('id', 'name', 'status', 'stage', 'progress', 'style', 'platform', 'audience', 'resolution', 'framing',
                  'brand', 'cleanup', 'push_in', 'speaker_positions', 'candidate_count', 'rendered_count',
-                 'approved_count', 'created_at', 'updated_at', 'error')
+                 'approved_count', 'created_at', 'updated_at', 'error', 'proxy_ready', 'edits')
 CLIP_FIELDS = ('id', 'start', 'end', 'score', 'rationale', 'title', 'description', 'cta', 'preview', 'review', 'editor',
-               'rendered', 'render_error', 'selection_edited', 'remove_ranges')
+               'rendered', 'render_error', 'selection_edited', 'remove_ranges', 'punch_ins')
 
 
 class RequestError(Exception):
@@ -53,7 +55,7 @@ def project_view(project, detail):
             clip['qc'] = {k: quality[k] for k in ('passed', 'checks', 'manual_review', 'dimensions') if k in quality} or None
             rendering = source.get('render') or {}
             clip['render'] = {k: rendering[k] for k in ('duration', 'framing', 'framing_reason', 'dimensions',
-                                                        'upscaled', 'encoder') if k in rendering}
+                                                        'upscaled', 'encoder', 'retained_source_ranges') if k in rendering}
             clips.append(clip)
         result['candidates'] = clips
     return result
@@ -62,11 +64,15 @@ def project_view(project, detail):
 class DeskServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port, root, engine, model=None):
+    def __init__(self, port, root, engine, model=None, source_dir=None):
         self.root = Path(root).expanduser().resolve()
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.engine = engine
         self.model = Path(model).expanduser().resolve(strict=True) if model else None
+        self.source_dir = Path(source_dir).expanduser().resolve(strict=True) if source_dir else None
+        if self.source_dir and not self.source_dir.is_dir():
+            raise ValueError("The source folder must be a local directory")
+        self.upload_store = UploadStore(self.root)
         self.uploads = threading.BoundedSemaphore(1)
         self.slots = threading.BoundedSemaphore(6)
         self.lock = threading.RLock()
@@ -79,7 +85,7 @@ class DeskServer(ThreadingHTTPServer):
         self.hosts = {f'127.0.0.1:{self.server_port}', f'localhost:{self.server_port}'}
         self.cookie_name = f'clipops_{self.server_port}'
 
-    def queue_job(self, project_id, count, clip_ids=None):
+    def queue_job(self, project_id, count, clip_ids=None, proxy=False):
         with self.lock:
             if project_id in self.active:
                 raise RequestError(409, 'This project already has a job running.')
@@ -87,11 +93,14 @@ class DeskServer(ThreadingHTTPServer):
                 raise RequestError(429, 'The render queue is full. Try again after a job finishes.')
             self.worker_errors.pop(project_id, None)
             self.active.add(project_id)
-            self.executor.submit(self._process, project_id, count, clip_ids)
+            self.executor.submit(self._process, project_id, count, clip_ids, proxy)
 
-    def _process(self, project_id, count, clip_ids):
+    def _process(self, project_id, count, clip_ids, proxy):
         try:
-            self.engine.process_project(self.root, project_id, render_count=count, clip_ids=clip_ids, model=self.model)
+            if proxy:
+                self.engine.generate_proxy(self.root, project_id)
+            else:
+                self.engine.process_project(self.root, project_id, render_count=count, clip_ids=clip_ids, model=self.model)
         except Exception as exc:
             with self.lock:
                 self.worker_errors[project_id] = self.safe_message(exc)
@@ -102,9 +111,9 @@ class DeskServer(ThreadingHTTPServer):
 
     def safe_message(self, exc):
         message = str(exc).splitlines()[0][:320] if str(exc).strip() else 'The operation failed.'
-        for private_path in (str(self.root), str(self.model) if self.model else ''):
+        for private_path in (self.root, self.model, self.source_dir):
             if private_path:
-                message = message.replace(private_path, '[local storage]')
+                message = message.replace(str(private_path), '[local storage]')
         return message
 
     def details(self, project_id):
@@ -169,7 +178,7 @@ class DeskHandler(BaseHTTPRequestHandler):
         token = cookie.get(self.server.cookie_name)
         if not token or not secrets.compare_digest(token.value, self.server.session):
             raise RequestError(403, 'Open Studio in a local browser to begin a session.')
-        if self.command == 'POST':
+        if self.command in ('POST', 'PATCH', 'DELETE'):
             if self.headers.get('Origin') != 'http://' + hosts[0] or not secrets.compare_digest(self.headers.get('X-ClipOps-CSRF', ''), self.server.csrf):
                 raise RequestError(403, 'This request requires an active Studio session. Reload the page.')
 
@@ -199,7 +208,14 @@ class DeskHandler(BaseHTTPRequestHandler):
             if self.command != 'HEAD':
                 self.wfile.write(content)
         elif path == '/api/session':
-            self._json({'csrf': self.server.csrf, 'local_model': bool(self.server.model), 'upload_limit': MAX_MEDIA})
+            self._json({'csrf': self.server.csrf, 'local_model': bool(self.server.model), 'upload_limit': self.server.upload_store.capacity, 'chunk_bytes': self.server.upload_store.chunk,
+                        'local_sources': bool(self.server.source_dir)})
+        elif path == '/api/local-sources' and self.server.source_dir:
+            from itertools import islice
+
+            files = (p.name for p in self.server.source_dir.iterdir()
+                     if p.suffix.lower() in VIDEO_TYPES and not p.is_symlink() and p.is_file())
+            self._json(sorted(islice(files, 200)))
         elif path == '/api/projects':
             self._json([project_view(p, False) for p in self.server.engine.list_projects(self.server.root)])
         elif match := re.fullmatch(rf'/api/projects/({ID})', path):
@@ -244,38 +260,140 @@ class DeskHandler(BaseHTTPRequestHandler):
                 self.wfile.write(block)
                 remaining -= len(block)
 
+    def _import_metadata(self, meta):
+        if not isinstance(meta, dict) or meta.get('rights') is not True:
+            raise RequestError(400, 'Confirm your rights to process the footage.')
+        filename = meta.get('filename', '')
+        if (not isinstance(filename, str) or not 1 <= len(filename) <= 180 or
+                Path(filename).name != filename or '\\' in filename or any(ord(c) < 32 for c in filename)):
+            raise RequestError(400, 'Invalid video filename.')
+        suffix = Path(filename).suffix.lower()
+        if suffix not in VIDEO_TYPES:
+            raise RequestError(415, 'Choose an MP4, MOV, MKV or WebM source.')
+        media_type = meta.get('mime') or 'application/octet-stream'
+        compatible = {VIDEO_TYPES[suffix], 'application/octet-stream'}
+        if suffix == '.mov':
+            compatible.add('video/mp4')
+        if media_type not in compatible:
+            raise RequestError(415, 'The selected file type does not match its video extension.')
+        transcript = meta.get('transcript')
+        if transcript is None and self.server.model is None:
+            raise RequestError(400, 'Choose a timestamped transcript or start Studio with --model.')
+        if transcript is not None and not isinstance(transcript, (dict, list)):
+            raise RequestError(400, 'Choose a timestamped JSON transcript.')
+        count = meta.get('render_count', 5)
+        if type(count) is not int or not 0 <= count <= 30:
+            raise RequestError(400, 'Choose between zero and 30 initial renders.')
+        name = meta.get('name') or Path(filename).stem
+        if not isinstance(name, str) or not name.strip() or len(name) > 140:
+            raise RequestError(400, 'Enter a project name of at most 140 characters.')
+        return {'filename': filename, 'name': name.strip(), 'transcript': transcript,
+                'render_count': count, 'style': meta.get('style', 'podcast'),
+                'platform': meta.get('platform', 'shorts')}
+
+    def _create_job(self, media, work, spec, **options):
+        transcript = None
+        if spec['transcript'] is not None:
+            from pilot import save_json
+            transcript = work / 'timed-transcript.json'
+            save_json(transcript, spec['transcript'])
+        return self.server.engine.create_project(media, self.server.root, transcript=transcript, model=self.server.model,
+                rights=True, name=spec['name'], render_count=spec['render_count'],
+                style=spec['style'], platform=spec['platform'], **options)
+
+    def _import_result(self, project_id, count):
+        try:
+            self.server.queue_job(project_id, count)
+        except (RequestError, UploadError) as exc:
+            self._json({'id': project_id, 'message': str(exc)}, 201)
+            return
+        self._json({'id': project_id}, 201)
+
+    def _upload_route(self, path):
+        store = self.server.upload_store
+        verb = self.command
+        version = [('Tus-Resumable', TUS)]
+        if path == '/api/uploads' and verb == 'POST':
+            payload = self._read_json()
+            spec = self._import_metadata(payload.get('metadata'))
+            key = payload.get('id')
+            if not isinstance(key, str):
+                raise RequestError(400, 'Upload ID is required.')
+            state = store.begin(key, payload.get('size'), spec)
+            self._headers(201, 'text/plain', 0, version + [
+                ('Location', '/api/uploads/' + key), ('Upload-Offset', str(state['offset'])),
+                ('Upload-Expires', expires(state))])
+            return
+        match = re.fullmatch(rf'/api/uploads/({ID})(/complete)?', path)
+        if not match:
+            raise RequestError(404, 'Unknown upload route.')
+        key, complete = match.groups()
+        if complete and verb == 'POST':
+            project, count = store.finish(key, self.server.root,
+                                          lambda file, work, spec: self._create_job(
+                                              file, work, spec, job_id=key, staged_upload=True))
+            # A replay after completion returns the existing project without starting a new render.
+            details = self.server.engine.get_project(self.server.root, project)
+            if details['status'] == 'queued':
+                self._import_result(project, count)
+            else:
+                self._json({'id': project}, 201)
+            return
+        if complete or verb not in ('HEAD', 'PATCH', 'DELETE'):
+            raise RequestError(405, 'Use HEAD, PATCH or DELETE on the upload itself.')
+        if self.headers.get('Tus-Resumable') != TUS:
+            raise RequestError(412, 'Use Tus-Resumable 1.0.0 for upload requests.')
+        status = 204
+        if verb == 'DELETE':
+            store.cancel(key)
+            self._headers(status, 'text/plain', 0, version)
+            return
+        if verb == 'PATCH':
+            if self.headers.get_content_type() != 'application/offset+octet-stream':
+                raise RequestError(415, 'Use application/offset+octet-stream for chunks.')
+            offsets = self.headers.get_all('Upload-Offset', [])
+            hashes = self.headers.get_all('Upload-Checksum', [])
+            if len(offsets) != 1 or not re.fullmatch(r'[0-9]{1,12}', offsets[0]) or len(hashes) != 1:
+                raise RequestError(400, 'A byte offset and a checksum are required.')
+            length = self._length(store.chunk)
+            if not self.server.uploads.acquire(blocking=False):
+                raise RequestError(429, 'Another upload is writing. Retry this chunk.')
+            try:
+                state = store.append(key, int(offsets[0]), length, checksum(hashes[0]), self.rfile)
+            finally:
+                self.server.uploads.release()
+        else:
+            status = 200
+            state = store.inspect(key)
+        self._headers(status, 'text/plain', 0, version + [
+            ('Upload-Offset', str(state['offset'])), ('Upload-Length', str(state['size'])),
+            ('Upload-Expires', expires(state)), ('Upload-Receipt', state.get('receipt', EMPTY_RECEIPT))])
+
+    def _local_import(self):
+        if not self.server.source_dir:
+            raise RequestError(404, 'Configure a trusted local source folder first.')
+        spec = self._import_metadata(self._read_json())
+        media = self.server.source_dir / spec['filename']
+        if media.is_symlink() or not media.is_file():
+            raise RequestError(404, 'Choose a regular file in the configured source folder.')
+        with tempfile.TemporaryDirectory(dir=self.server.root, prefix='.local-intake-') as scratch:
+            job = self._create_job(media, Path(scratch), spec, reference=True)
+        self._import_result(job, spec['render_count'])
+
     def _upload(self):
         if self.headers.get_content_type() != 'application/octet-stream':
             raise RequestError(415, 'Use the Studio import form to upload video.')
-        length = self._length(MAX_MEDIA + MAX_JSON)
+        length = self._length(LEGACY_MEDIA + MAX_JSON)
         header = self.headers.get('X-ClipOps-Metadata-Length', '')
         if not re.fullmatch(r'\d{1,8}', header) or not 1 <= int(header) < length or int(header) > MAX_JSON:
             raise RequestError(400, 'Invalid upload metadata length.')
-        if length - int(header) > MAX_MEDIA:
+        if length - int(header) > LEGACY_MEDIA:
             raise RequestError(413, 'Video exceeds the local size limit.')
         if not self.server.uploads.acquire(blocking=False):
             raise RequestError(429, 'Another import is in progress.')
         try:
-            meta = json.loads(self.rfile.read(int(header)))
-            if not isinstance(meta, dict) or meta.get('rights') is not True:
-                raise RequestError(400, 'Confirm your rights to process the footage.')
-            filename = meta.get('filename', '')
-            if not isinstance(filename, str) or not 1 <= len(filename) <= 180 or re.search(r'[/\\\x00-\x1f]', filename):
-                raise RequestError(400, 'Invalid video filename.')
-            suffix = Path(filename).suffix.lower()
-            if suffix not in VIDEO_TYPES:
-                raise RequestError(415, 'Choose an MP4, MOV, MKV or WebM source.')
-            media_type = meta.get('mime') or 'application/octet-stream'
-            if media_type not in (VIDEO_TYPES[suffix], 'application/octet-stream', 'video/mp4' if suffix == '.mov' else VIDEO_TYPES[suffix]):
-                raise RequestError(415, 'The selected file type does not match its video extension.')
-            if meta.get('transcript') is None and self.server.model is None:
-                raise RequestError(400, 'Choose a timestamped transcript or start Studio with --model.')
-            count = meta.get('render_count', 5)
-            if type(count) is not int or not 0 <= count <= 30:
-                raise RequestError(400, 'Choose between zero and 30 initial renders.')
-            name = meta.get('name') or Path(filename).stem
-            if not isinstance(name, str) or not name.strip() or len(name) > 140:
-                raise RequestError(400, 'Enter a project name of at most 140 characters.')
+            meta = self._import_metadata(json.loads(self.rfile.read(int(header))))
+            filename, count = meta['filename'], meta['render_count']
             remaining = length - int(header)
             if shutil.disk_usage(self.server.root).free < 2 * remaining + 64 * 1024**2:
                 raise RequestError(507, 'Local storage needs space for the upload and private project copy.')
@@ -295,7 +413,7 @@ class DeskHandler(BaseHTTPRequestHandler):
                     transcript = tmp / 'timed-transcript.json'
                     transcript.write_text(json.dumps(meta['transcript'], ensure_ascii=False), encoding='utf-8')
                 project_id = self.server.engine.create_project(source, self.server.root, transcript=transcript, model=self.server.model,
-                    rights=True, name=name.strip(), render_count=count, style=meta.get('style', 'podcast'), platform=meta.get('platform', 'shorts'))
+                    rights=True, name=meta['name'], render_count=count, style=meta.get('style', 'podcast'), platform=meta.get('platform', 'shorts'))
             try:
                 self.server.queue_job(project_id, count)
             except RequestError as exc:
@@ -307,10 +425,13 @@ class DeskHandler(BaseHTTPRequestHandler):
             self.server.uploads.release()
 
     def _post(self, path):
+        if path == '/api/import-local':
+            self._local_import()
+            return
         if path == '/api/import':
             self._upload()
             return
-        match = re.fullmatch(rf'/api/projects/({ID})/(edit|review|render|purge)', path)
+        match = re.fullmatch(rf'/api/projects/({ID})/(edit|review|render|proxy|purge)', path)
         if not match:
             raise RequestError(404, 'Route not found.')
         project_id, action = match.groups()
@@ -322,7 +443,7 @@ class DeskHandler(BaseHTTPRequestHandler):
             if action == 'edit':
                 allowed = {'segments', 'style', 'platform', 'brand', 'resolution', 'framing', 'candidate_id', 'title',
                            'editor', 'start', 'end', 'description', 'cta', 'remove_ranges', 'cleanup', 'push_in',
-                           'speaker_positions', 'audience'}
+                           'speaker_positions', 'audience', 'punch_ins'}
                 if not data or set(data) - allowed:
                     raise RequestError(400, 'Unknown or missing editable field.')
                 engine.edit_project(root, project_id, **data)
@@ -342,25 +463,32 @@ class DeskHandler(BaseHTTPRequestHandler):
                     if len(set(ids)) != len(ids) or count != len(ids):
                         raise RequestError(400, 'Choose each candidate once.')
                 self.server.queue_job(project_id, count, ids)
+            elif action == 'proxy':
+                engine.get_project(root, project_id)
+                self.server.queue_job(project_id, 0, proxy=True)
             elif action == 'purge':
                 project = engine.get_project(root, project_id)
                 if data.get('confirm_name') != project['name']:
                     raise RequestError(400, 'Type the project name to confirm deletion.')
                 engine.purge_project(root, project_id)
                 self.server.worker_errors.pop(project_id, None)
-        self._json({'ok': True}, 202 if action == 'render' else 200)
+        self._json({'ok': True}, 202 if action in ('render', 'proxy') else 200)
 
     def _handle(self):
         try:
             path = urlsplit(self.path).path
             self._validate_request(path)
-            if self.command == 'POST':
+            if path == '/api/uploads' or path.startswith('/api/uploads/'):
+                self._upload_route(path)
+            elif self.command == 'POST':
                 self._post(path)
+            elif self.command in ('PATCH', 'DELETE'):
+                raise RequestError(405, 'This route does not support the request method.')
             else:
                 self._get(path)
         except (BrokenPipeError, ConnectionResetError, socket.timeout):
             self.close_connection = True
-        except RequestError as exc:
+        except (RequestError, UploadError) as exc:
             self._json({'error': str(exc)}, exc.status)
         except FileNotFoundError:
             self._json({'error': 'This project or artifact is unavailable.'}, 404)
@@ -374,18 +502,26 @@ class DeskHandler(BaseHTTPRequestHandler):
     do_GET = _handle
     do_HEAD = _handle
     do_POST = _handle
+    do_PATCH = _handle
+    do_DELETE = _handle
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True, type=Path, help='Private local project directory')
     parser.add_argument('--port', default=8765, type=int)
+    parser.add_argument('--source-dir', type=Path, help='Optional trusted folder for direct, read-only import')
+    parser.add_argument('--open', action='store_true', help='Open the local studio in the default browser')
     parser.add_argument('--model', type=Path, help='Optional local faster-whisper model directory')
     args = parser.parse_args()
     import pilot
     os.umask(0o077)
-    with DeskServer(args.port, args.root, pilot, model=args.model) as server:
+    with DeskServer(args.port, args.root, pilot, model=args.model, source_dir=args.source_dir) as server:
         print(f'ClipOps Studio is ready at http://127.0.0.1:{server.server_port}', flush=True)
+        if args.open:
+            import webbrowser
+            opener = threading.Thread(target=webbrowser.open, args=(f'http://127.0.0.1:{server.server_port}',), daemon=True)
+            opener.start()
         try:
             server.serve_forever()
         except KeyboardInterrupt:

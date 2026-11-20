@@ -134,11 +134,15 @@ function candidateRows() {
 }
 function monitor() {
   const c = current(), p = state.project;
-  const rendered = Boolean(c?.rendered);
-  const length = c ? (rendered ? c.render?.duration ?? c.end - c.start : c.end - c.start) : p.source.duration;
+  const rendered = Boolean(c?.rendered && !state.sourceView);
+  const length = c && rendered ? c.render?.duration ?? c.end - c.start : p.source.duration;
   const title = c?.title || p.source.name;
   const platform = rendered ? (platforms[p.platform] || p.platform).split(' · ')[0] : 'Original footage';
-  return `<section class="monitor" aria-label="Video preview"><div class="monitor-head"><span>${rendered ? 'Rendered preview' : 'Source preview'}</span><span class="mono">${escapeText(platform)}</span></div><div class="screen"><video id="video" preload="auto" playsinline aria-label="${escapeText(title)}" src="${mediaUrl(rendered ? 'preview' : 'source')}?v=${state.version}"></video></div><div class="transport"><button class="icon-button" data-action="play" aria-label="Play preview" id="play-toggle">▶</button><input id="scrub" type="range" min="0" max="${Number(length) || 0}" step="0.05" value="0" aria-label="Preview timeline"><span class="mono"><time id="elapsed">0:00</time> / ${clock(length)}</span><button class="icon-button" data-action="full" aria-label="Full screen preview">⛶</button></div><div class="monitor-foot"><strong dir="auto">${escapeText(title)}</strong><span>${c ? `${clock(c.start)}–${clock(c.end)}` : 'Full source'}</span></div></section>`;
+  return `<section class="monitor" aria-label="Video preview"><div class="monitor-head"><span>${rendered ? 'Rendered preview' : 'Source preview'}</span><span class="mono">${escapeText(platform)}</span></div><div class="screen"><video id="video" preload="${rendered ? 'auto' : 'metadata'}" playsinline aria-label="${escapeText(title)}" src="${mediaUrl(rendered ? 'preview' : 'source')}?v=${state.version}"></video></div><div class="transport"><button class="icon-button" data-action="play" aria-label="Play preview" id="play-toggle">▶</button><input id="scrub" type="range" min="0" max="${Number(length) || 0}" step="0.001" value="0" aria-label="Preview timeline"><span class="mono"><time id="elapsed">0:00</time> / ${clock(length)}</span><button class="icon-button" data-action="full" aria-label="Full screen preview">⛶</button></div><div class="monitor-actions">
+    ${c?.rendered ? button('compare',rendered ? 'View source' : 'View render') : ''}
+    ${c && !rendered ? button('mark-in','Set In')+button('mark-out','Set Out') : ''}
+    ${!p.proxy_ready ? button('proxy','Build browser preview','',p.busy) : ''}
+  </div><div class="monitor-foot"><strong dir="auto">${escapeText(title)}</strong><span>${c ? `${clock(c.start)}–${clock(c.end)}` : 'Full source'}</span></div></section>`;
 }
 function desk() {
   const p = state.project;
@@ -149,7 +153,7 @@ function desk() {
 function details() {
   const c = current();
   if (!c) return empty('No clip selected','Select a candidate once analysis finishes.');
-  return `<div class="detail-grid"><form id="details-form"><div class="form-grid">${formField('Clip title', `<input name="title" required maxlength="160" value="${escapeText(c.title)}" dir="auto">`, true)}${formField('Start (source seconds)',`<input name="start" type="number" step="0.01" min="0" required value="${Number(c.start)}">`)}${formField('End (source seconds)',`<input name="end" type="number" step="0.01" min="0.01" required value="${Number(c.end)}">`)}${formField('Description',`<textarea name="description" rows="2" dir="auto">${escapeText(c.description)}</textarea>`,true)}${formField('Call to action',`<input name="cta" value="${escapeText(c.cta)}" dir="auto">`,true)}</div><div class="form-footer"><button class="button dark" ${state.project.busy ? 'disabled' : ''}>Save clip edits</button>${button('cut-dialog','Review pause and filler cuts','',state.project.busy)}${button('render-one','Render this clip','',state.project.busy)}</div></form><aside><h3>Selection rationale</h3><p class="hint">${c.selection_edited ? 'Original selection score' : 'Editorial score'} · ${escapeText(c.score)} points</p>${c.render_error ? `<p class="error-banner">${escapeText(c.render_error)}</p>` : ''}${c.render?.framing_reason ? `<p class="hint">${escapeText(c.render.framing_reason)}</p>` : ''}<ul class="rationale">${(Array.isArray(c.rationale) ? c.rationale : [c.rationale]).filter(Boolean).map(reason => `<li>${escapeText(reason)}</li>`).join('')}</ul></aside></div>`;
+  return `<div class="detail-grid"><form id="details-form"><div class="form-grid">${formField('Clip title', `<input name="title" required maxlength="160" value="${escapeText(c.title)}" dir="auto">`, true)}${formField('Start (source seconds)',`<input name="start" type="number" step="0.001" min="0" required value="${Number(c.start)}">`)}${formField('End (source seconds)',`<input name="end" type="number" step="0.001" min="0.01" required value="${Number(c.end)}">`)}${formField('Description',`<textarea name="description" rows="2" dir="auto">${escapeText(c.description)}</textarea>`,true)}${formField('Call to action',`<input name="cta" value="${escapeText(c.cta)}" dir="auto">`,true)}</div><div class="form-footer"><button class="button dark" ${state.project.busy ? 'disabled' : ''}>Save clip edits</button>${button('cut-dialog','Review pause and filler cuts','',state.project.busy)}${button('punch-dialog','Edit punch-ins','',state.project.busy)}${button('render-one','Render this clip','',state.project.busy)}</div></form><aside><h3>Selection rationale</h3><p class="hint">${c.selection_edited ? 'Original selection score' : 'Editorial score'} · ${escapeText(c.score)} points</p>${c.render_error ? `<p class="error-banner">${escapeText(c.render_error)}</p>` : ''}${c.render?.framing_reason ? `<p class="hint">${escapeText(c.render.framing_reason)}</p>` : ''}<ul class="rationale">${(Array.isArray(c.rationale) ? c.rationale : [c.rationale]).filter(Boolean).map(reason => `<li>${escapeText(reason)}</li>`).join('')}</ul>${(state.project.edits || []).some(e => e.candidate === c.id) ? `<details><summary>Selection edit history</summary><ul class="rationale">${state.project.edits.filter(e => e.candidate === c.id).slice(-6).reverse().map(e => `<li>${escapeText(new Date(e.at).toLocaleString())} · ${escapeText(e.fields.map(x => x.replaceAll('_',' ')).join(', '))}</li>`).join('')}</ul></details>` : ''}</aside></div>`;
 }
 function transcriptList() {
   const all = state.project.segments;
@@ -192,13 +196,14 @@ function draw() {
   else if (state.view === 'exports') main.innerHTML = exportsPage();
   else { main.innerHTML = desk(); bindVideo(); drawTab(); }
 }
-function bindVideo(sourceCue=null) {
+function bindVideo(requestedTime=null, fullSource=false) {
   const video = $('#video');
   if (!video) return;
   const c = current();
-  const start = sourceCue === null ? (c?.rendered ? 0 : c?.start || 0) : 0;
-  const end = sourceCue === null ? (c?.rendered ? c.render?.duration ?? c.end - c.start : c?.end || state.project.source.duration) : state.project.source.duration;
-  const seek = sourceCue === null ? start : sourceCue;
+  const rendered = c?.rendered && !state.sourceView && !fullSource;
+  const start = 0;
+  const end = rendered ? c.render?.duration ?? c.end - c.start : state.project.source.duration;
+  const seek = requestedTime ?? (rendered ? 0 : (c?.start || 0));
   const slider = $('#scrub');
   slider.max = end - start;
   const play = $('#play-toggle');
@@ -206,7 +211,11 @@ function bindVideo(sourceCue=null) {
     play.textContent = video.paused ? '▶' : 'Ⅱ';
     play.setAttribute('aria-label', video.paused ? 'Play preview' : 'Pause preview');
   };
-  video.onloadedmetadata = () => { if (seek > 0) video.currentTime = seek; };
+  const seekWhenReady = () => {
+    if (requestedTime !== null || seek > 0) video.currentTime = Math.max(0, Math.min(seek, end));
+  };
+  video.onloadedmetadata = seekWhenReady;
+  if (video.readyState > 0) seekWhenReady();
   video.ontimeupdate = () => {
     if (video.currentTime > end && !video.paused) { video.pause(); video.currentTime = end; }
     $('#elapsed').textContent = clock(video.currentTime - start);
@@ -220,32 +229,210 @@ function bindVideo(sourceCue=null) {
     } else video.pause();
   };
   slider.oninput = () => { video.currentTime = start + Number(slider.value); };
+  slider.onkeydown = ev => {
+    if (rendered || !c || !['i','o'].includes(ev.key.toLowerCase())) return;
+    ev.preventDefault();
+    markTime(ev.key.toLowerCase() === 'i' ? 'start' : 'end', video.currentTime);
+  };
 }
-function importDialog() {
-  openDialog('Import project', `<form id="import-form"><div class="form-grid">${formField('Project name','<input name="name" maxlength="140" placeholder="Use source filename">',true)}${formField('Source video','<input name="video" type="file" accept=".mp4,.mov,.mkv,.webm" required><small class="hint">MP4, MOV, MKV or WebM. Up to 6 GiB per import.</small>',true)}${formField('Timestamped transcript',`<input name="transcript" type="file" accept=".json,application/json" ${state.model ? '' : 'required'}><small class="hint">${state.model ? 'Optional. A local speech model is available.' : 'Import a JSON transcript with start, end and text for each cue.'}</small>`,true)}${formField('Editing style',`<select name="style">${options(styles,'podcast')}</select>`)}${formField('Export format',`<select name="platform">${options(platforms,'shorts')}</select>`)}${formField('Initial renders','<input type="number" min="0" max="30" name="count" value="5" required><small class="hint">Use zero to rank candidates first.</small>',true)}<label class="check wide"><input type="checkbox" name="rights" required> I have permission to process this footage and transcript locally.</label><progress class="upload-progress wide" id="upload-progress" max="100" value="0" hidden></progress></div><div class="form-footer"><button class="button primary">Import & process</button></div></form>`);
+
+function markTime(field, time) {
+  if (state.tab !== 'details') {
+    state.tab = 'details';
+    drawTab();
+  }
+  const input = $(`#details-form [name="${field}"]`);
+  input.value = time.toFixed(3);
+  input.focus();
 }
-async function upload(form) {
-  const file = form.video.files[0];
-  if (file.size > 6 * 1024**3) throw new Error('Video exceeds the 6 GiB limit.');
+
+function mapPlayhead(clip, seconds, toSource) {
+  let elapsed = 0;
+  for (const [start,end] of clip.render?.retained_source_ranges || [[clip.start,clip.end]]) {
+    if (toSource && seconds <= elapsed + end - start) return start + Math.max(0,seconds-elapsed);
+    if (!toSource && seconds <= end) return elapsed + Math.max(0,seconds-start);
+    elapsed += end-start;
+  }
+  return toSource ? clip.end : elapsed;
+}
+async function importDialog() {
+  const local = state.session.local_sources ? await api('/api/local-sources') : [];
+  const onDisk = local.length ? formField('Open from the configured source folder',
+    `<select id="local-source" name="local"><option value="">Upload a video instead</option>
+      ${local.map(name => `<option value="${escapeText(name)}">${escapeText(name)}</option>`).join('')}</select>
+      <small class="hint">Direct access leaves the original in place.</small>`,true) : '';
+  openDialog('Import project', `<form id="import-form"><div class="form-grid">
+    ${formField('Project name','<input name="name" maxlength="140" placeholder="Use source filename">',true)}
+    ${onDisk}
+    ${formField('Source video','<input name="video" type="file" accept=".mp4,.mov,.mkv,.webm"><small class="hint">MP4, MOV, MKV or WebM. Resumable uploads up to 20 GiB.</small>',true)}
+    ${formField('Timestamped transcript',`<input name="transcript" type="file" accept=".json,application/json"><small class="hint">${state.model ? 'Optional. Local speech recognition is available.' : 'New projects need a timed JSON transcript. To resume, select the same video.'}</small>`,true)}
+    ${formField('Editing style',`<select name="style">${options(styles,'podcast')}</select>`)}
+    ${formField('Export format',`<select name="platform">${options(platforms,'shorts')}</select>`)}
+    ${formField('Initial renders','<input type="number" min="0" max="30" name="count" value="5" required><small class="hint">Use zero to rank candidates first.</small>',true)}
+    <label class="check wide"><input type="checkbox" name="rights" required> I have permission to process this footage and transcript locally.</label>
+    <div id="upload-status" class="wide" aria-live="polite" role="status" hidden>
+      <progress class="upload-progress" id="upload-progress" max="100" value="0" aria-label="Committed upload progress"></progress>
+      <span id="upload-message" class="hint"></span>
+    </div>
+  </div><div class="form-footer">
+    <button class="button" type="button" data-action="pause-upload" hidden>Pause upload</button>
+    <button class="button danger" type="button" data-action="cancel-upload" hidden>Cancel upload</button>
+    <button class="button primary">Import & process</button>
+  </div></form>`);
+}
+
+async function sha256(buffer) {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', buffer));
+}
+
+const hexDigest = value => Array.from(value, x => x.toString(16).padStart(2,'0')).join('');
+
+async function verifyPrefix(form, file, offset, receipt) {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > file.size) throw new Error('Invalid saved upload offset.');
+  const step = state.session.chunk_bytes;
+  let chain = new Uint8Array(32);
+  for (let start = 0; start < offset; start += step) {
+    reportUpload(form,start,offset,'Checking the previously uploaded portion…');
+    const block = await file.slice(start,Math.min(offset,start+step)).arrayBuffer();
+    const record = new Uint8Array(72);
+    record.set(chain);
+    new DataView(record.buffer).setBigUint64(32, BigInt(block.byteLength));
+    record.set(await sha256(block),40);
+    chain = await sha256(record.buffer);
+  }
+  if (hexDigest(chain) !== receipt) throw new Error('The selected file differs from the saved upload. Choose the original file to resume.');
+}
+
+async function fileKey(file) {
+  const chunk = 65536;
+  const head = file.slice(0, chunk);
+  const tail = file.slice(Math.max(file.size - chunk, 0));
+  const sample = new Blob([file.name, '?', String(file.size), '?', String(file.lastModified), head, tail]);
+  return 'clipops-upload-' + hexDigest(await sha256(await sample.arrayBuffer()));
+}
+
+async function uploadCall(path, method, init={}) {
+  const response = await fetch(path, {...init, method,
+    headers:{'X-ClipOps-CSRF':state.csrf,'Tus-Resumable':'1.0.0',...init.headers}});
+  if (!response.ok) {
+    const info = await response.json().catch(() => ({}));
+    throw Object.assign(new Error(info.error || `Upload request failed (${response.status}).`),{status:response.status});
+  }
+  return response;
+}
+
+function reportUpload(form, bytes, total, text) {
+  const progress = form.querySelector('#upload-status');
+  progress.hidden = false;
+  progress.querySelector('progress').value = 100 * bytes / total;
+  progress.querySelector('#upload-message').textContent = text;
+}
+
+async function uploadSpec(form, filename, mime) {
   const transcript = form.transcript.files[0];
-  if (transcript && transcript.size > 16 * 1024**2) throw new Error('The transcript exceeds 16 MiB.');
-  const spec = {filename:file.name, mime:file.type, name:form.elements.namedItem('name').value, rights:form.rights.checked,
+  if (transcript?.size > 15 * 1024**2) throw new Error('Choose a transcript under 15 MiB.');
+  return {filename, mime, name:form.elements.namedItem('name').value, rights:form.rights.checked,
     transcript:transcript ? JSON.parse(await transcript.text()) : null, style:form.elements.namedItem('style').value,
     platform:form.platform.value, render_count:Number(form.count.value)};
-  const metadata = new TextEncoder().encode(JSON.stringify(spec));
-  const progressBar = $('#upload-progress'); progressBar.hidden = false;
-  const result = await new Promise((resolve,reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST','/api/import'); xhr.responseType = 'json';
-    xhr.setRequestHeader('Content-Type','application/octet-stream'); xhr.setRequestHeader('X-ClipOps-CSRF',state.csrf);
-    xhr.setRequestHeader('X-ClipOps-Metadata-Length',String(metadata.byteLength));
-    xhr.upload.onprogress = ev => { if (ev.lengthComputable) progressBar.value = 100 * ev.loaded / ev.total; };
-    xhr.onerror = () => reject(new Error('The local upload was interrupted.'));
-    xhr.onload = () => xhr.status === 201 ? resolve(xhr.response) : reject(new Error(xhr.response?.error || `Import failed (${xhr.status})`));
-    xhr.send(new Blob([metadata,file]));
-  });
+}
+
+async function upload(form) {
+  const local = form.elements.namedItem('local')?.value;
+  let result;
+  if (local) {
+    result = await api('/api/import-local', await uploadSpec(form,local,'application/octet-stream'));
+  } else {
+    const file = form.video.files[0];
+    if (!file?.size) throw new Error('Choose a source video.');
+    if (file.size > state.session.upload_limit) throw new Error('This video exceeds the workspace upload limit.');
+    const storage = await fileKey(file);
+    let id = localStorage.getItem(storage), offset = 0;
+    const controller = new AbortController(), signal = controller.signal;
+    if (id) {
+      try {
+        const reply = await uploadCall('/api/uploads/'+id,'HEAD',{signal});
+        if (Number(reply.headers.get('Upload-Length')) !== file.size) throw new Error('The saved upload is for another file.');
+        offset = Number(reply.headers.get('Upload-Offset'));
+        if (offset) await verifyPrefix(form,file,offset,reply.headers.get('Upload-Receipt'));
+      } catch (error) {
+        if (![404,410].includes(error.status)) throw error;
+        localStorage.removeItem(storage);
+        id = null;
+      }
+    }
+    if (!id) {
+      const spec = await uploadSpec(form,file.name,file.type);
+      id = crypto.randomUUID().replaceAll('-','');
+      localStorage.setItem(storage,id);
+      await uploadCall('/api/uploads','POST',{signal,headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({id, size:file.size,metadata:spec})});
+    }
+    const path = '/api/uploads/'+id;
+    state.transfer = {controller,path,storage,active:true};
+    const pause = form.querySelector('[data-action="pause-upload"]');
+    const cancel = form.querySelector('[data-action="cancel-upload"]');
+    pause.hidden = cancel.hidden = false;
+    const size = state.session.chunk_bytes;
+    let failures = 0;
+    try {
+      while (offset < file.size) {
+        const mib = Math.floor(offset/1024**2), total = Math.ceil(file.size/1024**2);
+        reportUpload(form,offset,file.size,`${mib} of ${total} MiB confirmed`);
+        const block = await file.slice(offset,offset+size).arrayBuffer();
+        const sum = btoa(String.fromCharCode(...await sha256(block)));
+        try {
+          const reply = await uploadCall(path,'PATCH',{signal, headers:{
+            'Content-Type':'application/offset+octet-stream','Upload-Offset':String(offset),
+            'Upload-Checksum':'sha256 '+sum},body:block});
+          const next = Number(reply.headers.get('Upload-Offset'));
+          if (next !== offset + block.byteLength) throw new Error('The server returned an unexpected checkpoint.');
+          offset = next;
+          failures = 0;
+        } catch (error) {
+          if (signal.aborted) throw error;
+          if (error.status && ![409,429,460,500,502,503,504].includes(error.status)) throw error;
+          if (++failures > 5) throw new Error('Upload paused after repeated errors. Select the same video to resume.');
+          await new Promise(resolve => setTimeout(resolve, Math.min(4000, 250 * 2 ** failures)));
+          const saved = await uploadCall(path,'HEAD',{signal});
+          offset = Number(saved.headers.get('Upload-Offset'));
+        }
+      }
+      pause.hidden = cancel.hidden = true;
+      reportUpload(form,file.size,file.size,'Verifying the source and opening the project…');
+      result = await api(path+'/complete',{});
+      localStorage.removeItem(storage);
+      state.transfer = null;
+    } catch (error) {
+      state.transfer.active = false;
+      pause.hidden = true;
+      if (signal.aborted) {
+        reportUpload(form,offset,file.size,'Paused. Select the same video to resume.');
+        return;
+      }
+      throw error;
+    }
+  }
   closeDialog(); state.projects = await api('/api/projects'); location.hash = `desk/${result.id}`;
   notice(result.message || 'Footage imported. Processing locally.');
+}
+
+async function cancelUpload() {
+  const transfer = state.transfer;
+  if (!transfer) return;
+  transfer.controller.abort();
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await uploadCall(transfer.path,'DELETE');
+      if (state.transfer === transfer) state.transfer = null;
+      localStorage.removeItem(transfer.storage);
+      closeDialog();
+      notice('Upload cancelled.');
+      return;
+    } catch (error) {
+      if (error.status !== 409 || attempt === 4) throw error;
+      await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
+    }
+  }
 }
 function batchDialog() {
   const candidates = state.project.candidates;
@@ -253,7 +440,21 @@ function batchDialog() {
 }
 function cueDialog(index) {
   const s = state.project.segments[index];
-  openDialog('Edit caption',`<form id="cue-form" data-index="${index}"><div class="form-grid">${formField('Start (source seconds)',`<input type="number" step="0.001" name="start" required min="0" value="${Number(s.start)}">`)}${formField('End (source seconds)',`<input type="number" step="0.001" name="end" required min="0.001" value="${Number(s.end)}">`)}${formField('Caption text',`<textarea rows="3" name="text" dir="auto" required>${escapeText(s.text)}</textarea>`,true)}</div><div class="form-footer"><button class="button primary">Save caption</button></div></form>`);
+  openDialog('Edit caption',`<form id="cue-form" data-index="${index}"><div class="form-grid">${formField('Start (source seconds)',`<input type="number" step="0.001" name="start" required min="0" value="${Number(s.start)}">`)}${formField('End (source seconds)',`<input type="number" step="0.001" name="end" required min="0.001" value="${Number(s.end)}">`)}${formField('Speaker',`<input name="speaker" maxlength="80" dir="auto" value="${escapeText(s.speaker)}">`,true)}${formField('Caption text',`<textarea rows="3" name="text" dir="auto" required>${escapeText(s.text)}</textarea>`,true)}</div><div class="form-footer"><button class="button primary">Save caption</button></div></form>`);
+}
+function punchDialog() {
+  const c = current();
+  const values = (c.punch_ins || []).map(z => [z.start,z.end,z.scale].join(', ')).join('\n');
+  openDialog('Edit punch-ins', `<form id="punch-form">${formField('Timed punch-ins',`<textarea name="punches" rows="5" placeholder="12.400, 15.000, 1.08">${escapeText(values)}</textarea><small class="hint">One start, end, zoom triplet per line in source seconds. Choose 1.02–1.18×, within one retained interval.</small>`)}<div class="form-footer"><button class="button primary">Save punch-ins</button></div></form>`);
+}
+function intervals(text, count) {
+  return text.trim() ? text.trim().split(/\n+/).map(line => {
+    const parts = line.split(',').map(part => part.trim());
+    if (parts.length !== count || parts.some(part => !part || !Number.isFinite(Number(part)))) {
+      throw new Error(`Use ${count} numbers separated by commas on each line.`);
+    }
+    return parts.map(Number);
+  }) : [];
 }
 async function cutDialog() {
   const c = current();
@@ -281,15 +482,11 @@ async function onSubmit(form, submitter) {
       return editRequest({style:data.style,platform:data.platform,resolution:Number(data.resolution),framing:data.framing,brand,
         speaker_positions, cleanup:form.cleanup.checked, push_in:form.push_in.checked},'Render settings saved.');
     }
-    case 'cuts-form': {
-      const ranges = data.cuts.trim() ? data.cuts.trim().split(/\n+/).map(line => {
-        const parts = line.split(',').map(part => part.trim());
-        if (parts.length !== 2 || parts.some(part => !part || !Number.isFinite(Number(part)))) {
-          throw new Error('Enter each interval as two numbers separated by a comma.');
-        }
-        return parts.map(Number);
-      }) : [];
-      return editRequest({candidate_id:current().id,remove_ranges:ranges},'Reviewed cuts saved.');
+    case 'cuts-form':
+      return editRequest({candidate_id:current().id,remove_ranges:intervals(data.cuts,2)},'Reviewed cuts saved.');
+    case 'punch-form': {
+      const punches = intervals(data.punches,3).map(([start,end,scale]) => ({start,end,scale}));
+      return editRequest({candidate_id:current().id,punch_ins:punches},'Punch-ins saved.');
     }
     case 'cue-form': {
       const index = Number(form.dataset.index), segments = state.project.segments.slice();
@@ -297,6 +494,10 @@ async function onSubmit(form, submitter) {
       if (data.text !== previous.text || Number(data.start) !== previous.start || Number(data.end) !== previous.end) {
         const {words, ...other} = previous;
         segments[index] = {...other,start:Number(data.start),end:Number(data.end),text:data.text};
+      }
+      if (data.speaker?.trim() !== (previous.speaker || '')) {
+        const {speaker,...cue} = segments[index];
+        segments[index] = data.speaker.trim() ? {...cue,speaker:data.speaker.trim()} : cue;
       }
       return editRequest({segments},'Caption saved.');
     }
@@ -327,7 +528,7 @@ document.addEventListener('submit',async event => {
 document.addEventListener('click', async event => {
   const node = event.target.closest('button'); if (!node || node.disabled) return;
   try {
-    if (node.dataset.clip) { state.clipId = node.dataset.clip; draw(); return; }
+    if (node.dataset.clip) { state.clipId = node.dataset.clip; state.sourceView = false; draw(); return; }
     if (node.dataset.tab) { state.tab = node.dataset.tab; drawTab(); return; }
     if (node.dataset.cutAppend !== undefined) {
       const field = $('#cuts-form textarea'), range = node.dataset.start + ', ' + node.dataset.end;
@@ -339,7 +540,7 @@ document.addEventListener('click', async event => {
       const cue = state.project.segments[Number(node.dataset.seek)];
       const video = $('#video');
       video.src = mediaUrl('source');
-      bindVideo(cue.start);
+      bindVideo(cue.start,true);
       $('.monitor-head span').textContent = 'Source preview';
       $('.monitor-head .mono').textContent = 'Original footage';
       $('.monitor-foot strong').textContent = state.project.source.name;
@@ -348,10 +549,30 @@ document.addEventListener('click', async event => {
       video.play().catch(notifyError); return;
     }
     switch (node.dataset.action) {
-      case 'close': closeDialog(); break;
-      case 'import': importDialog(); break;
+      case 'close':
+        if (state.transfer?.active) state.transfer.controller.abort();
+        closeDialog(); break;
+      case 'import': await importDialog(); break;
+      case 'pause-upload': state.transfer?.controller.abort(); break;
+      case 'cancel-upload': await cancelUpload(); break;
       case 'batch': batchDialog(); break;
       case 'cut-dialog': await cutDialog(); break;
+      case 'punch-dialog': punchDialog(); break;
+      case 'compare': {
+        const seconds = mapPlayhead(current(),$('#video').currentTime,!state.sourceView);
+        state.sourceView = !state.sourceView;
+        draw();
+        bindVideo(seconds);
+        break;
+      }
+      case 'mark-in': case 'mark-out':
+        markTime(node.dataset.action === 'mark-in' ? 'start' : 'end', $('#video').currentTime);
+        break;
+      case 'proxy':
+        await api(projectUrl('proxy'),{});
+        await refresh();
+        notice('Browser preview added to the local queue.');
+        break;
       case 'resume': await renderRequest(); break;
       case 'render-one': await renderRequest([current().id]); break;
       case 'previous': case 'next': state.page += node.dataset.action === 'next' ? 1 : -1; $('#transcript-list').innerHTML = transcriptList(); break;
@@ -369,7 +590,7 @@ document.addEventListener('change', event => {
 });
 window.addEventListener('hashchange',() => route().catch(notifyError));
 async function boot() {
-  const session = await api('/api/session'); state.csrf = session.csrf; state.model = session.local_model;
+  const session = await api('/api/session'); state.csrf = session.csrf; state.model = session.local_model; state.session = session;
   state.projects = await api('/api/projects'); await route();
   setInterval(async () => {
     const p = state.project;

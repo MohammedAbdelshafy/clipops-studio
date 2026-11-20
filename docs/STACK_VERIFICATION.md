@@ -12,7 +12,7 @@ Read-only review on November 19, 2026. The ClipOps worktree starts at PR #5, `aa
 
 ## Pilot quality gate
 
-`pilot_qc.validate_source` opens a regular file, checks its signature and container, then probes its stream properties using file-only protocol and demuxer allowlists. Pilot input supports self-contained MP4, MOV, MKV and WebM, an 8 GiB maximum and a three-hour maximum. Videos can have a single soundless picture track for inspection. Narrated exports require an audible audio track. FFprobe has a 40-second timeout, 32-stream cap, finite dimensions and duration checks. Card art, transport streams, playlists and arbitrary display rotation require preparation outside this workflow.
+`pilot_qc.validate_source` opens a regular file, checks its signature and container, then probes its stream properties using file-only protocol and demuxer allowlists. The current pilot accepts self-contained MP4, MOV, MKV and WebM up to 20 GiB and three hours. Videos can have a single soundless picture track for inspection. Narrated exports require an audible audio track. FFprobe has a 40-second timeout, 32-stream cap, finite dimensions and duration checks. Card art, transport streams, playlists and arbitrary display rotation require preparation outside this workflow.
 
 `inspect_export` decodes the full export with FFmpeg's fatal error options. The per-clip report records checks, measurements and the outstanding human review. An unpassed check blocks approval in the pilot. The older `clipops.py qc` remains the basic compatibility check for the older vertical-clip and silent-card workflow. The release decision uses the pilot report.
 

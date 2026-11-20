@@ -10,10 +10,14 @@ On Linux, install Python 3.11+, FFmpeg and FFprobe with libx264 and libass, Font
 cd /workspace/clipops-rc
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-pilot.txt
-.venv/bin/python studio.py --root "$PWD/out/pilot" --port 8765
+./launch-studio --root "$PWD/out/pilot" --port 8765
 ```
 
 Open `http://127.0.0.1:8765`. The launcher prints the local URL. Import MP4, MOV, MKV, or WebM with audio plus a UTF-8 JSON transcript, or configure the optional offline ASR path below. Each cue uses source-relative seconds and supports optional speaker labels and genuine word timestamps.
+
+Add `--source-dir /absolute/path/to/footage` to let the desk open authorized files from that folder without copying them. Keep the original unchanged while the project is active. Select **Build browser preview** when a codec plays poorly in the browser. It makes a smaller local MP4 proxy, while export uses the original.
+
+For browser uploads, progress counts checksum-verified bytes on disk. Uploads can pause and resume after a reload or Studio restart. Choose the same unchanged file to resume, then the client verifies the saved prefix before continuing. Uploading a 20 GiB file requires at least that much free space plus a small working reserve. Completed uploads transfer ownership to the project without a second full-size copy.
 
 ```json
 {"segments":[{"start":0.8,"end":4.2,"text":"The opening line.","speaker":"Host"}]}
@@ -30,19 +34,21 @@ For a prepared transcript, open the project, search or seek from a cue, review t
 
 Use **Review pause and filler cuts** to inspect suggestions and save intervals you have listened to. Source seconds remain visible in the edit and the playback timeline uses the shortened render duration. Audio ramps soften the joins and sidecars follow the edited timeline. Use **Render settings** for light noise reduction, a gentle push-in, or speaker-based framing with calibrated positions.
 
+Use **Set In** and **Set Out** or **I** and **O** with the source timeline focused to capture the playhead to the nearest millisecond. **View source** and **View render** switch between the same moment before and after the edit. **Edit punch-ins** accepts timed source ranges with 1.02–1.18× zoom. The selection history records changes. Speaker correction leaves existing aligned word times in place when the spoken text and cue timing stay the same.
+
 ## Run the first authorized 45–60-minute video
 
 From the repository, choose either command. The `--rights-confirmed` flag attests permission to process this source. It is separate from clip delivery approval. Use a private project root with mode 0700.
 
 ```bash
 .venv/bin/python pilot.py --root "$PWD/out/pilot" run /absolute/path/to/source.mp4 \
-  --model /absolute/path/to/multilingual-ct2-model --language auto \
+  --reference --model /absolute/path/to/multilingual-ct2-model --language auto \
   --rights-confirmed --style podcast --platform shorts --candidates 24 --render-count 5
 ```
 
 ```bash
 .venv/bin/python pilot.py --root "$PWD/out/pilot" run /absolute/path/to/source.mp4 \
-  --transcript /absolute/path/to/transcript.json --rights-confirmed \
+  --reference --transcript /absolute/path/to/transcript.json --rights-confirmed \
   --style podcast --platform shorts --candidates 24 --render-count 5
 ```
 
@@ -67,11 +73,14 @@ On interruption use the same job ID with `resume`; completed bundles and ASR chu
 - Presets cover business education, value-driven clips, podcasts, cinematic storytelling, Egyptian education, fashion, workshops, gaming, and minimal professional presentation. The styles control density, highlight behavior, type and color.
 - The default preserve-frame layout retains on-screen context. Use center crop after previewing. Face-aware framing needs the optional local OpenCV install. Speaker and split framing can use `--speaker-positions` with normalized horizontal coordinates per known label. Framing remains an editorial decision.
 - The renderer API accepts local rights-confirmed logos, B-roll and low-gain WAV accents. Its default preserves the source delivery rhythm. Studio exposes timing, captions, reviewed cuts, brand, preset, cleanup and framing controls.
+- To mix a reviewed WAV bed through `pilot_edit.render`, pass `music={"path": local_wav, "gain_db": -27, "rights_confirmed": True}`. The voice lowers the bed during speech. Listen to the finished blend at normal volume.
 - The score is a ranking signal across the supplied transcript. It uses timing, hook/completeness and recurring topic evidence. Copy suggestions remain editable and require verification. The product scorecard is evaluated with suitable footage and named reviewers.
 
 ## Operations and release bounds
 
 The browser desk is a single-OS-user application. Named assignments and approval record editorial attribution. Shared agency accounts, client-relay hosting, tenant authentication, and verified platform measurement require additional engineering. Keep project storage outside public and synced directories. Source, transcript, and cached files can be removed from Studio by explicitly confirming the name or via `pilot.py purge PROJECT_ID --confirm PROJECT_ID`. Delivered copies and backups follow your retention policy.
+
+For travel or remote editing on your own trusted workstation, Studio can be reached over a separately authenticated SSH tunnel bound to `127.0.0.1` on both ends. The host still runs the normal loopback launcher. Public listeners and shared editor accounts require a separate access design.
 
 The delivery packet is MP4, SRT, VTT, and, through the CLI export, a JSON record with approved copy, QC and source time range. A separately authorized distribution operator can take the approved files into MBM-Social or a platform's manual editor. The legacy Postiz scheduling adapter has mock evidence and needs channel-specific authorization and validation. See the [stack verification](docs/STACK_VERIFICATION.md).
 

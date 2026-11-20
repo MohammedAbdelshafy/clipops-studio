@@ -13,7 +13,7 @@ import subprocess
 import time
 import unicodedata
 
-MAX_SOURCE_BYTES = 8 * 1024**3
+MAX_SOURCE_BYTES = 20 * 1024**3
 MAX_SOURCE_SECONDS = 3 * 3600
 MAX_EXPORT_SECONDS = 180
 MAX_PIXELS = 8192 * 4320
@@ -99,7 +99,7 @@ def validate_source(path: str | Path) -> dict:
         raise ValueError("Source must be a regular local file")
     size = source.stat().st_size
     if not 0 < size <= MAX_SOURCE_BYTES:
-        raise ValueError("Source exceeds the 8 GiB intake limit or is empty")
+        raise ValueError("Source exceeds the 20 GiB intake limit or is empty")
     suffix = source.suffix.lower()
     if suffix not in {".mp4", ".m4v", ".mov", ".webm", ".mkv"}:
         raise ValueError("Use an MP4, MOV, M4V, MKV or WebM source")

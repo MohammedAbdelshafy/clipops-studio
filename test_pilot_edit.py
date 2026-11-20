@@ -123,11 +123,29 @@ class RenderTests(unittest.TestCase):
         out = self.root / "edit-clock.mp4"
         result = edit.render(self.source, out, .11, 2.73, self.rows, resolution=720, encoder="cpu",
                              remove_ranges=[(.83, 1.13)],
-                             sound_accents=[{"path": accent, "at": .28, "rights_confirmed": True}])
+                             sound_accents=[{"path": accent, "at": .28, "rights_confirmed": True}],
+                             music={"path": accent, "gain_db": -27, "rights_confirmed": True})
         self.assertEqual(result["sound_accent_count"], 1)
+        self.assertTrue(result["music_ducking"])
         quality = inspect_export(out, result["expected_duration"], result["dimensions"], result["captions"],
                                  source_info=validate_source(self.source), require_sidecars=True)
         self.assertTrue(quality["passed"], quality)
+
+    def test_timed_punch_in_maps_through_a_reviewed_cut(self):
+        from pilot_qc import inspect_export
+        target = self.root / "punch.mp4"
+        rendered = edit.render(self.source, target, 0, 2.7, self.rows, resolution=720,
+                               remove_ranges=[(.8,1.15)],
+                               punch_ins=[{"start":1.35,"end":2.25,"scale":1.08}])
+        (start, end, scale), = rendered["punch_ins"]
+        self.assertAlmostEqual(start, 1.0)
+        self.assertAlmostEqual(end, 1.9)
+        self.assertEqual(scale, 1.08)
+        qc = inspect_export(target, rendered["expected_duration"], rendered["dimensions"],
+                            rendered["captions"], source_info=validate_source(self.source))
+        self.assertTrue(qc["passed"], qc)
+        with self.assertRaisesRegex(ValueError, "retained source"):
+            edit.punch_in_plan([{"start":.5,"end":1.4,"scale":1.08}], [(0,.8),(1.15,2.7)])
 
     def test_uhd_supported_source_exports_landscape_at_native_resolution(self):
         src = self.root / "uhd.mp4"

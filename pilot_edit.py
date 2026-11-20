@@ -337,6 +337,31 @@ def _keep_ranges(start, end, remove_ranges):
     return keep
 
 
+def punch_in_plan(punch_ins, ranges):
+    """Convert reviewed source-time accents to nonoverlapping edited intervals."""
+    if not isinstance(punch_ins, list) or len(punch_ins) > 8:
+        raise ValueError("Choose up to eight punch-ins")
+    plan = []
+    for item in punch_ins:
+        if not isinstance(item, dict) or set(item) != {"start", "end", "scale"}:
+            raise ValueError("Punch-ins require start, end and scale")
+        start, end, scale = (_number(item[key], key) for key in ("start", "end", "scale"))
+        if end - start < .4 or not 1.02 <= scale <= 1.18:
+            raise ValueError("Use at least 0.4 seconds and a scale from 1.02 to 1.18")
+        elapsed = 0.
+        for left, right in ranges:
+            if left <= start < end <= right:
+                plan.append((elapsed + start - left, elapsed + end - left, scale))
+                break
+            elapsed += right - left
+        else:
+            raise ValueError("Each punch-in must fit inside one retained source interval")
+    plan.sort()
+    if any(one[1] > two[0] for one, two in zip(plan, plan[1:])):
+        raise ValueError("Punch-ins must not overlap")
+    return plan
+
+
 def _guard_cut_words(segments, ranges, start, end):
     boundaries = [t for interval in ranges for t in interval if start < t < end]
     if not boundaries:
@@ -611,10 +636,39 @@ def _mix_accents(filters, command, sound, accents, duration, first_index):
     return sound
 
 
+def _duck_music(filters, command, voice, music, duration, index):
+    if not isinstance(music, dict) or music.get("rights_confirmed") is not True:
+        raise ValueError("Confirm rights for the local music bed")
+    gain = _number(music.get("gain_db", -24), "music gain")
+    if not -40 <= gain <= -18:
+        raise ValueError("Music bed gain must be between -40 and -18 dB")
+    path = Path(music["path"]).expanduser().resolve(strict=True)
+    if not path.is_file() or path.suffix.lower() != ".wav" or path.stat().st_size > 128 * 1024**2:
+        raise ValueError("Choose a local PCM WAV music bed of up to 128 MiB")
+    try:
+        with wave.open(str(path), "rb") as stream:
+            rate = stream.getframerate()
+            if not 8000 <= rate <= 96000 or not 1 <= stream.getnchannels() <= 2 or not stream.getnframes():
+                raise ValueError("Choose a nonempty mono or stereo PCM WAV at 8–96 kHz")
+    except (EOFError, wave.Error) as exc:
+        raise ValueError("The music bed does not have a valid PCM WAV header") from exc
+    command.extend(["-protocol_whitelist", "file", "-format_whitelist", "wav", "-stream_loop", "-1",
+                    "-t", str(duration), "-i", str(path)])
+    fade = min(.35, duration / 5)
+    filters.extend([
+        f"[{voice}]aresample=48000,aformat=channel_layouts=stereo,asplit[dialogue][music-key]",
+        f"[{index}:a:0]aresample=48000,aformat=channel_layouts=stereo,volume={gain:.2f}dB,"
+        f"afade=t=in:d={fade:.4f},afade=t=out:st={duration-fade:.4f}:d={fade:.4f}[music-bed]",
+        "[music-bed][music-key]sidechaincompress=threshold=0.025:ratio=8:attack=20:release=280[ducked]",
+        "[dialogue][ducked]amix=inputs=2:duration=first:normalize=0[with-music]",
+    ])
+    return "with-music"
+
+
 def render(source: Path, output: Path, start: float, end: float, segments: list, style="podcast",
            platform="shorts", *, resolution=1080, framing="contain", brand=None,
            speaker_positions=None, cleanup=False, remove_ranges=None, cutaways=None, push_in=False,
-           sound_accents=None, encoder="auto"):
+           sound_accents=None, encoder="auto", punch_ins=None, music=None):
     """Render local H.264/AAC plus editable clip-relative SRT and WebVTT.
 
     remove_ranges are explicit editorial decisions in absolute source time. Set push_in for
@@ -642,6 +696,9 @@ def render(source: Path, output: Path, start: float, end: float, segments: list,
         raise ValueError("Render interval must lie within the source and last 0.25–180 s")
     end = min(end, metadata["duration"])
     ranges = _keep_ranges(start, end, remove_ranges)
+    punch_plan = punch_in_plan(punch_ins or [], ranges)
+    if punch_plan and push_in:
+        raise ValueError("Choose timed punch-ins or a continuous push-in for this clip")
     _guard_cut_words(segments, ranges, start, end)
     length = sum(b - a for a, b in ranges)
     aspect = PLATFORMS[platform][0]
@@ -652,7 +709,7 @@ def render(source: Path, output: Path, start: float, end: float, segments: list,
     target_height = height / 2 if mode == "split" else height
     visible_width = source_width * abs(points[1][1] - points[0][1]) if mode == "split" else source_width
     factor = (min if mode == "contain" else max)(width/visible_width, target_height/source_height)
-    factor *= 1.04 if push_in else 1
+    factor *= max((step[2] for step in punch_plan), default=1.04 if push_in else 1)
     if resolution == 2160 and (min(source_width, source_height) < 2160
                               or max(source_width, source_height) < max(width, height) or factor > 1.001):
         raise ValueError("4K requires source-supported pixels for this layout")
@@ -682,10 +739,17 @@ def render(source: Path, output: Path, start: float, end: float, segments: list,
             rate = fps if 8 <= fps <= 60 else Fraction(30)
             filters.append(f"[{picture}]fps={rate}:start_time=0:round=near[editclock]")
             picture = "editclock"
-        if push_in:
+        if push_in or punch_plan:
             if not 8 <= fps <= 60:
                 raise ValueError("A measured 8–60 fps source rate is required for a push-in")
-            filters.append(f"[{picture}]zoompan=z='1+0.04*min(1,on/({float(fps):.6f}*{length:.6f}))':"
+            clock = f"on/{float(fps):.6f}"
+            if punch_plan:
+                accents = [f"{scale-1:.5f}*clip(min(({clock}-{a:.6f})/0.16,({b:.6f}-{clock})/0.16),0,1)"
+                           for a, b, scale in punch_plan]
+                zoom = "1+" + "+".join(accents)
+            else:
+                zoom = f"1+0.04*min(1,{clock}/{length:.6f})"
+            filters.append(f"[{picture}]zoompan=z='{zoom}':"
                            f"x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={width}x{height}:fps={fps}[zoomed]")
             picture = "zoomed"
         picture = _add_art(filters, cmd, picture, width, height, length, cutaways, brand, directory, options)
@@ -696,6 +760,11 @@ def render(source: Path, output: Path, start: float, end: float, segments: list,
                 raise ValueError("Sound accents require source audio for the mix")
             sound = _mix_accents(filters, cmd, sound, sound_accents, length,
                                  1 + len(cutaways or []) + bool(brand.get("logo")))
+        if music is not None:
+            if not audio:
+                raise ValueError("Ducking a music bed requires an audible source dialogue track")
+            sound = _duck_music(filters, cmd, sound, music, length,
+                                1 + len(cutaways or []) + bool(brand.get("logo")) + len(sound_accents or []))
         if audio:
             treatment = "highpass=f=65,afftdn=nr=6:nf=-45," if cleanup else ""
             # Reconcile the samples with the edit clock before encoding. In a
@@ -732,4 +801,6 @@ def render(source: Path, output: Path, start: float, end: float, segments: list,
             "framing_reason": evidence, "requested_framing": framing, "captions": captions,
             "caption_mode": sorted({cue["timing"] for cue in captions}), "encoder": encoding[1],
             "retained_source_ranges": ranges, "has_audio": audio, "push_in": push_in,
-            "cutaway_count": len(cutaways or []), "sound_accent_count": len(sound_accents or [])}
+            "punch_ins": punch_plan,
+            "cutaway_count": len(cutaways or []), "sound_accent_count": len(sound_accents or []),
+            "music_ducking": music is not None}
