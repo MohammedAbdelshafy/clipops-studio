@@ -4,9 +4,11 @@
 
 **Android phone:** [Run in account-restricted Google Cloud Shell](docs/ANDROID_CLOUD_SHELL.md) using `bash START_CLIPOPS_CLOUD_SHELL.sh` after opening the repository in Cloud Shell. This is a session-based private preview, not persistent hosting.
 
+**Desktop release and outstanding work:** [November 20 integration audit](docs/DESKTOP_RELEASE_AUDIT_2026-11-20.md). The desktop app is the primary editing product; the native Android Pocket APK is an intentionally limited companion, not desktop parity.
+
 Run `./launch-studio` after installing the free local dependencies. [First test](docs/TRY_CLIPOPS.md) · [Pilot guide](PILOT.md) · [Offline-first fallbacks](docs/FREE_FALLBACKS.md) · [Evidence and limits](docs/RC_HARDENING_RESULTS.md).
 
-**Local competitive review improvements (unpublished build):** In **Creative review**, use **Find source moments** to search the existing timestamped transcript in English or Arabic and preview selected in/out points. Use **Analyze visual scene changes** to inspect real frame transitions of that candidate using local FFmpeg. Nothing cuts or changes approvals until you apply and rerender the reviewed edit. [Implementation and constraints](docs/COMPETITIVE_UPGRADE_2026-11-20.md).
+**Desktop creative-review improvements (merged and locally testable):** In **Creative review**, use **Find source moments** to search the existing timestamped transcript in English or Arabic and preview selected in/out points. Use **Analyze visual scene changes** to inspect real frame transitions of that candidate using local FFmpeg. Nothing cuts or changes approvals until you apply and rerender the reviewed edit. [Implementation and constraints](docs/COMPETITIVE_UPGRADE_2026-11-20.md).
 
 > **Historical roadmap:** The Remotion generator documented below was scoped in October 2026 but is **not** in this repository. It is separate from the implemented FFmpeg pilot. Historical test claims refer to their recorded environments, not the current browser test.
 

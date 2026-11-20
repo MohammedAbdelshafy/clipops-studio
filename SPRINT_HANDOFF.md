@@ -1,5 +1,7 @@
 # ClipOps Studio release candidate
 
+**Current desktop status (November 20, 2026):** `main` includes the integrated local Studio plus PR #16 source moment finder and visual scene reviewer at merge `9e5e55b7cb34307dd80096b8c8cfa44eed635e7a`. The following 89-test narrative and branch paths are historical RC evidence; the newer feature-commit CI passed 125 repository + 4 transcript-brief tests, desktop/mobile browser and release package. See [current audit and unverified TODOs](docs/DESKTOP_RELEASE_AUDIT_2026-11-20.md).
+
 **GO for a supervised, local first-video test with authorized footage.** Use a reviewed timestamped transcript for Egyptian Arabic or mixed-language material. **NO-GO for unsupervised client delivery, public uploads or live distribution.** The real-footage acceptance scores remain unmeasured.
 
 The isolated branch is `local/final-pilot-rc`, based on PR #5 at `aa6d38a`, with PR #4 in its ancestry. The first-video command, browser startup, output format and review flow are in [PILOT.md](PILOT.md). Repository relationships, PR #151, pricing boundaries, transport status and dependency evidence are in [stack verification](docs/STACK_VERIFICATION.md). [Editor benchmark](docs/EDITOR_BENCHMARK.md)

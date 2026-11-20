@@ -1,6 +1,14 @@
 name: ClipOps offline release gate
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '*.py'
+      - 'studio/**'
+      - 'tools/**'
+      - 'requirements*.txt'
+      - '.github/workflows/clipops-release-gate.yml'
   pull_request:
     # Include the existing stacked PR base so the gate can run before merging.
     branches: [main, feat/clipops-video-mvp-20261112, review/clipops-release-ci-2026-11-14, review/clipops-pilot-hardening-20261120, review/clipops-cinematic-video-ui-20261120]
