@@ -70,7 +70,9 @@ def main():
             depth = page.get_by_role('button', name='Disable 3D depth motion')
             expect(depth).to_be_enabled()
             assert page.evaluate("document.documentElement.classList.contains('depth-on')")
-            page.locator('.library-hero').hover(position={'x':140,'y':80})
+            hero_box = page.locator('.library-hero').bounding_box()
+            assert hero_box and hero_box['width'] > 180
+            page.mouse.move(hero_box['x'] + 140, hero_box['y'] + 80)
             page.wait_for_timeout(150)
             assert page.locator('.library-hero').evaluate(
                 "el => el.style.getPropertyValue('--depth-ry') !== ''")
