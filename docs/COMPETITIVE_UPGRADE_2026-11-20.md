@@ -1,6 +1,6 @@
-# ClipOps Studio — competitive editing upgrades (local review candidate)
+# ClipOps Studio — competitive editing upgrades (merged desktop beta)
 
-This is a **local-only source tree based on verified main `e93f9d54`**. It has not been published, pushed, merged or deployed. It preserves all old draft PRs.
+**Status updated November 20, 2026:** PR #16 passed the offline, Chrome desktop/mobile and package-build gates, and merged into `main` as `9e5e55b7cb34307dd80096b8c8cfa44eed635e7a`. The text below describes the implemented functions and ongoing limitations. The earlier local-only/unpublished description referred to a pre-merge snapshot; no application was publicly deployed.
 
 ## Implemented
 
