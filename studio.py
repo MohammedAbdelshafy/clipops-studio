@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 
 from studio_uploads import UploadStore, UploadError, TUS, EMPTY_RECEIPT, expires, checksum
 import clipops_creative_review as creative_review
+import studio_delivery
 
 ASSETS = Path(__file__).resolve().parent / 'studio'
 STATIC = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
@@ -230,6 +231,16 @@ class DeskHandler(BaseHTTPRequestHandler):
                 raise RequestError(404, 'Candidate not found.')
             rows = creative_review.clean_segments(project.get('segments', []))
             self._json(creative_review.review_candidate(rows, clip))
+        elif match := re.fullmatch(rf'/api/projects/({ID})/approved-delivery.zip', path):
+            if self.command != 'GET':
+                raise RequestError(405, 'Approved ZIP downloads require GET.')
+            with self.server.lock:
+                if match[1] in self.server.active:
+                    raise RequestError(409, 'Finish the running render before packaging deliveries.')
+            with tempfile.TemporaryDirectory(prefix='.delivery-', dir=self.server.root) as temporary:
+                archive = Path(temporary) / 'approved-clips.zip'
+                studio_delivery.bundle_approved(self.server.engine, self.server.root, match[1], archive)
+                self._file(archive, 'bundle', 'approved-clips')
         elif match := re.fullmatch(rf'/media/({ID})/(source|({CLIP})/(preview|export|srt|vtt))', path):
             kind = match[4] or 'source'
             file = self.server.engine.get_media_path(self.server.root, match[1], clip_id=match[3], kind=kind)
@@ -253,7 +264,7 @@ class DeskHandler(BaseHTTPRequestHandler):
                 return
             status = 206
             extra.append(('Content-Range', f'bytes {start}-{end}/{size}'))
-        if kind in ('export', 'srt', 'vtt'):
+        if kind in ('export', 'srt', 'vtt', 'bundle'):
             extra.append(('Content-Disposition', f'attachment; filename="{clip_id}{path.suffix.lower()}"'))
         self._headers(status, MEDIA_TYPES.get(path.suffix.lower(), 'application/octet-stream'), max(0, end - start + 1), extra)
         if self.command == 'HEAD':
