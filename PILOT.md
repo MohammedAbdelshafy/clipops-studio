@@ -7,7 +7,7 @@ The production path runs on a single trusted workstation. ClipOps ingests an aut
 On Linux, install Python 3.11+, FFmpeg and FFprobe with libx264 and libass, Fontconfig, and DejaVu Sans and Liberation Sans fonts. On Debian or Ubuntu the media and font packages are `ffmpeg fontconfig fonts-dejavu-core fonts-liberation`. FFmpeg must provide Arabic shaping through libass with HarfBuzz and FriBidi. The tested runner used Debian and FFmpeg 7.1.5. macOS and Windows have yet to be qualified.
 
 ```bash
-cd /workspace/clipops-rc
+cd /path/to/clipops-studio
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-pilot.txt
 ./launch-studio --root "$PWD/out/pilot" --port 8765
