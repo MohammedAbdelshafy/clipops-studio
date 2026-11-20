@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from studio import DeskServer
 
@@ -141,6 +141,23 @@ class DeskTests(unittest.TestCase):
             project['source'] = old_source
             project['segments'] = old_rows
             project['candidates'] = old_candidates
+
+    def test_batch_zip_requires_session_and_uses_private_temporary_storage(self):
+        path = f'/api/projects/{self.project_id}/approved-delivery.zip'
+        self.assertEqual(self.request('GET', path)[0], 403)
+        auth = self.session()
+        with patch('studio.studio_delivery.bundle_approved') as make_bundle:
+            make_bundle.side_effect = lambda engine, root, project_id, destination: destination.write_bytes(b'private zip fixture')
+            status, headers, body = self.request('GET', path, **auth)
+            self.assertEqual(status, 200)
+            self.assertEqual(body, b'private zip fixture')
+            self.assertIn('attachment', headers['Content-Disposition'])
+            self.assertEqual(self.request('HEAD', path, **auth)[0], 405)
+        self.assertEqual(list(self.root.glob('.delivery-*')), [])
+
+        with patch('studio.studio_delivery.bundle_approved', side_effect=PermissionError('No approved clips')):
+            self.assertEqual(self.request('GET', path, **auth)[0], 403)
+        self.assertEqual(list(self.root.glob('.delivery-*')), [])
 
     def test_destructive_action_requires_matching_project_name(self):
         status, _, _ = self.request('POST',f'/api/projects/{self.project_id}/purge',b'{"confirm_name":"elsewhere"}',
