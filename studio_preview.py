@@ -33,6 +33,6 @@ def tailnet_login(user: str) -> str:
     """Validate a single trusted owner identity from Tailscale-User-Login."""
     if not isinstance(user, str) or not 3 <= len(user) <= 254 or not user.isascii():
         raise ValueError('A Tailscale owner login is required')
-    if user.count('@') != 1 or any(c.isspace() or ord(c) < 33 or ord(c) > 126 for c in user):
+    if user.count('@') != 1 or re.fullmatch(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+', user) is None:
         raise ValueError('Enter one exact Tailscale owner login, for example user@example.com')
     return user.lower()
