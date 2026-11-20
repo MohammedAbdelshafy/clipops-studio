@@ -1,22 +1,19 @@
-# ClipOps Pocket — native Android offline beta
+# ClipOps Studio Android — full workflow through private laptop/cloud
 
-This is a real installable Android application, **not** a Termux script or a WebView shortcut.
+The installable **ClipOps Studio** Android APK opens the **same complete web Studio** already used on the desktop, via private HTTPS endpoints and Chrome Custom Tabs. It retains the offline Pocket trim/editor underneath for disconnected operation.
 
-- Native Android Media3 player and on-device Transformer. Android 10+. Compiled against Android API 36.
-- Pick a video using Android's document picker, preview, mark in/out, select original/vertical/square framing, render a <=180-second clip, save to Movies/ClipOps, share using Android's share sheet.
-- Entire trim pipeline is **offline**. No INTERNET permission, no accounts, no telemetry, no paid providers, no upload.
-- Cropping modes use fit/padding to preserve content rather than pretending to do automatic speaker tracking.
-- Source video remains unchanged; final clip appears in device gallery only after a complete successful export.
+Choose LAPTOP (Tailscale Serve) or CLOUD (account-gated Google Cloud Shell) from inside the app. Use the exact private URL assigned by the provider, and ensure the corresponding Python/FFmpeg backend is already running. Host profiles are saved privately with no credentials, URL parameters or public services.
 
-**Deliberate scope:** This APK does NOT yet port the desktop Python/FFmpeg ranker, AI transcription, multi-speaker effects, 15–20 GiB processing guarantees, brand templates, or full batch factory. Those remain in the desktop/local-first ClipOps Studio, separately available in GitHub. The Hatchable ClipOps Content Studio is a separate hosted *transcript-drafting* companion, not the native renderer.
+**Important:** full capabilities are provided by the connected backend, not ported into this APK. This build does NOT implement cross-server project synchronization, automatic failover of renders, native on-device transcription or persistent public cloud service. Cloud Shell is a temporary test fallback for small files, not a paid/prod renderer. The native Pocket backup works offline and is still limited to 3-minute trims.
 
-Build on GitHub Actions `ClipOps Pocket Android APK` (Java 17 / Gradle 8.13 / AGP 8.11.1 / Media3 1.11.1). Artifacts are unsigned-for-release but debug-signed for internal installation. This APK has not been accepted on a real physical device until you test it. A Google Play release needs a secure production keystore, store policy review, and user approval.
+For owner-only private laptop pairing and safe cloud setup, see [Hybrid Android Studio guide](../docs/HYBRID_ANDROID_STUDIO.md).
 
-## Install (Android)
+## Android test build
 
-1. Download `ClipOps-Pocket-APK` from a successful Actions run, extract its ZIP to obtain `app-debug.apk`.
-2. Tap the APK on your own device; enable *Install unknown apps* only for the download source when Android asks. Don't sideload from unknown links.
-3. Open **ClipOps Pocket** icon; select a small, rights-cleared MP4; set a short interval; tap **Export MP4**.
-4. Confirm the clip exists in **Gallery > Movies > ClipOps**, preview it and use **Share clip**.
+- Native app ID remains com.mbm.clipops.pocket for upgrade compatibility. Android 10+. Label is **ClipOps Studio**.
+- Java 17, Gradle 8.13, Android Gradle Plugin 8.11.1, Kotlin 2.2.10, Media3 1.11.1, AndroidX Browser 1.10.0.
+- GitHub Actions debug APK includes unit tests for source clip bounds and strict endpoint validation.
+- A successful APK build does not verify that your own Windows Tailscale proxy, Cloud Shell login, customer media upload or physical Samsung codec works.
+- Since GitHub debug keys may be ephemeral, uninstalling an earlier beta APK may be necessary if Android says the installed app was signed with another key. Gallery clips saved externally remain separate from the app sandbox.
 
-No Termux, Cloud Shell, or paid API is needed for these native features.
+No paid hosting, public deployment, account credential, asset migration or provider connection is created by installing the APK.
