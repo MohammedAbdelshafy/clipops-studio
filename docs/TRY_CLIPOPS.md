@@ -38,6 +38,10 @@ Open **http://127.0.0.1:8765** on the same workstation. For WSL2, open that addr
 
 Choose **Import project**, confirm processing rights, analyze, inspect candidates, edit captions and timing, render, and review the output. Export MP4, SRT and VTT only after a named reviewer confirms editorial approval and rights.
 
+## New source-grounded competitive review (local build only)
+
+In **Creative review**, use **Find source moments** with English/Arabic source words. Each result shows the original timed excerpt. **Play source** listens without editing; **Preview clip boundaries** creates an unapplied proposal for the selected candidate. Only **Apply reviewed edits** changes it, invalidates any previous approval and requires rerendering and a new review. **Analyze visual scene changes** samples actual video frames with local FFmpeg and reports likely shot transitions. These are advisory frame-difference hints, not safe automatic cuts. No provider or paid model receives the media.
+
 ## Test without customer video
 
 The optional synthetic fixture generator makes an original voiced source locally and a matching timestamped transcript (FFmpeg needs its `flite` and `librsvg` support):

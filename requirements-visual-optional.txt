@@ -1,0 +1,6 @@
+# OPTIONAL alternative scene analysis backend for future GPU/vision experiments.
+# The shipped on-demand scene reviewer uses FFmpeg already required by ClipOps;
+# no third-party Python package or network request is needed for it.
+# Install only in your private virtualenv after reviewing its license/dependencies:
+# python -m pip install 'scenedetect==0.7.3'
+scenedetect==0.7.3

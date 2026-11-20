@@ -127,6 +127,79 @@ def review_candidate(rows, clip, *, max_quotes=8):
             'speaker_counts': dict(sorted(Counter(r['speaker'] for r in selected if r['speaker']).items()))}
 
 
+def find_moments(rows, query, *, limit=8, min_seconds=8.0, max_seconds=75.0):
+    """Search ORIGINAL timed dialogue for reviewable, contiguous clip excerpts.
+
+    This is source-grounded lexical retrieval, never an AI semantic search or a
+    promise of virality. A matching cue must supply the source evidence and no
+    timestamps may be inferred from untimed text.
+    """
+    from pilot_intelligence import _tokens, STOP
+
+    if not isinstance(query, str) or not 2 <= len(query.strip()) <= 220:
+        raise ValueError('Search requires 2–220 characters of a topic or quote')
+    if type(limit) is not int or not 1 <= limit <= 12:
+        raise ValueError('Select between one and twelve source matches')
+    if not 0.25 <= min_seconds <= max_seconds <= 180:
+        raise ValueError('Invalid search excerpt duration')
+    tokens = list(dict.fromkeys(t for t in _tokens(query) if t not in STOP and len(t) > 1))
+    if not tokens or len(tokens) > 16:
+        raise ValueError('Search for up to sixteen meaningful words')
+    clean = clean_segments(rows)
+    if not clean:
+        return []
+    query_set = set(tokens)
+    terms = [set(_tokens(row['text'])) for row in clean]
+    candidates = []
+    for index, row in enumerate(clean):
+        matched = terms[index] & query_set
+        if not matched:
+            continue
+        # Preserve a small real lead-in when available; never cross a gap.
+        left = index
+        if index and row['start'] - clean[index - 1]['end'] <= 1.25 and row['start'] - clean[index - 1]['start'] <= 8:
+            left = index - 1
+        start = clean[left]['start']
+        end = row['end']
+        right = index
+        while end - start < min_seconds and right + 1 < len(clean):
+            nxt = clean[right + 1]
+            if nxt['start'] - end > 2.5 or nxt['end'] - start > max_seconds:
+                break
+            right += 1
+            end = max(end, nxt['end'])
+        # Include one complete follow-up if it closes a sentence, without
+        # crossing a topic-sized silence or exceeding the candidate limit.
+        if right + 1 < len(clean) and end - start < 28:
+            nxt = clean[right + 1]
+            if 0 <= nxt['start'] - end <= 1.25 and nxt['end'] - start <= max_seconds:
+                right += 1
+                end = max(end, nxt['end'])
+        if end - start < min_seconds:
+            continue
+        excerpt_rows = clean[left:right + 1]
+        covered = set().union(*(terms[j] for j in range(left, right + 1))) & query_set
+        matched_cues = [r for j,r in enumerate(clean[left:right + 1], left) if terms[j] & query_set][:4]
+        phrase = ' '.join(tokens) in ' '.join(_tokens(' '.join(r['text'] for r in excerpt_rows)))
+        # Match relevance is not a prediction of views or editorial quality.
+        score = round(80 * (len(covered) / len(query_set)) + (12 if phrase else 0) + min(8, 4 * len(matched_cues)), 1)
+        candidates.append({'start': start, 'end': end, 'match_score': round(score, 1),
+                           'matched_terms': sorted(covered), 'verbatim': ' '.join(r['text'] for r in excerpt_rows)[:700],
+                           'evidence': [{'start': r['start'], 'end': r['end'], 'verbatim': r['text']} for r in matched_cues],
+                           'method': 'offline_transcript_tokens',
+                           'review_note': 'Source words match the search; listen for story and context before applying.'})
+    candidates.sort(key=lambda c: (-c['match_score'], c['start'], c['end']))
+    result = []
+    for choice in candidates:
+        if any(max(0, min(choice['end'], c['end']) - max(choice['start'], c['start'])) >
+               0.6 * min(choice['end'] - choice['start'], c['end'] - c['start']) for c in result):
+            continue
+        result.append(choice)
+        if len(result) == limit:
+            break
+    return result
+
+
 def parse_time(token):
     if not TIME.fullmatch(token):
         raise ValueError('Use seconds, MM:SS, or HH:MM:SS for timestamps')
