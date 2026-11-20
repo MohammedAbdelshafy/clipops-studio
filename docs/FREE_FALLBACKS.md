@@ -17,3 +17,17 @@ Open **Free fallbacks** in the Studio top bar when an optional API, model, quota
 **YCloud:** Not configured as a ClipOps video-processing or publishing substitute. Future WhatsApp work requires the approved server-side secret boundary and separate permission for outbound messages.
 
 Run `python -m unittest discover -v` for backend checks. The GitHub Actions workflow additionally exercises desktop/mobile Playwright interactions and generates its own authorized synthetic video fixture. Tests must pass before merging into `main`.
+
+## Automatic browser-codec fallback (local only)
+
+If the browser cannot decode H.264/AAC MP4 but supports VP8/Opus WebM,
+the **rendered review preview** automatically uses `/media/<project>/<clip>/webm`.
+That endpoint generates and caches a small, private `preview.webm` from
+the existing render using local FFmpeg. The player never sends the video to
+another provider. The fully approved MP4, original soundtrack, editable
+captions, hash records and distribution gates remain untouched.
+
+This codec fallback affects **rendered clip review**. Unsupported original
+source codecs may still require a separate, explicit local browser proxy
+or a browser with the necessary codecs. Never treat the WebM proxy as the
+final high-resolution deliverable. It does not fix missing local FFmpeg.
