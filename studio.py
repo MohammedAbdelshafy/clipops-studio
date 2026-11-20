@@ -225,9 +225,12 @@ class DeskHandler(BaseHTTPRequestHandler):
             self._json(self.server.details(match[1]))
         elif match := re.fullmatch(rf'/api/projects/({ID})/({CLIP})/cuts', path):
             self._json(self.server.engine.suggest_cuts(self.server.root, match[1], match[2]))
-        elif match := re.fullmatch(rf'/media/({ID})/(source|({CLIP})/(preview|export|srt|vtt))', path):
+        elif match := re.fullmatch(rf'/media/({ID})/(source|({CLIP})/(preview|webm|export|srt|vtt))', path):
             kind = match[4] or 'source'
-            file = self.server.engine.get_media_path(self.server.root, match[1], clip_id=match[3], kind=kind)
+            if kind == 'webm':
+                file = self.server.engine.browser_preview(self.server.root, match[1], match[3])
+            else:
+                file = self.server.engine.get_media_path(self.server.root, match[1], clip_id=match[3], kind=kind)
             self._file(Path(file), kind, match[3])
         else:
             raise RequestError(404, 'Route not found.')
