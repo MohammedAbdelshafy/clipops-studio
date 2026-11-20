@@ -44,7 +44,8 @@ def main():
         server.upload_store.chunk = 256 * 1024
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        browser = playwright.chromium.launch(executable_path=args.chromium, headless=True, args=['--disable-dev-shm-usage'])
+        executable = args.chromium if Path(args.chromium).is_file() else None
+        browser = playwright.chromium.launch(executable_path=executable, headless=True, args=['--disable-dev-shm-usage'])
         try:
             url = f'http://127.0.0.1:{server.server_port}'
             ctx = browser.new_context(viewport={'width':1390,'height':1000}, accept_downloads=True)
@@ -53,6 +54,11 @@ def main():
             errors = []
             page.on('pageerror', lambda err: errors.append(str(err)))
             page.goto(url)
+            page.get_by_role('button',name='Free fallbacks').click()
+            expect(page.get_by_role('dialog')).to_be_visible()
+            expect(page.get_by_role('dialog')).to_contain_text('whisper.cpp')
+            expect(page.get_by_role('dialog')).to_contain_text('YouTube Studio')
+            page.get_by_role('button',name='Close dialog').click()
             page.get_by_role('button',name='Import project').first.click()
             form = page.locator('#import-form')
             form.locator('[name="name"]').fill('The editing room')
