@@ -159,6 +159,25 @@ def main():
             page.get_by_role('button',name='View render').click()
             expect(page.locator('.monitor-head')).to_contain_text('Rendered preview')
             expect(page.locator('.ambient-preview')).to_have_count(1)
+            # Diagnostic gate: separate authenticated HTTP delivery from browser codec support.
+            import subprocess
+            render_path = pilot.get_media_path(Path(tmp), job, clip, "preview")
+            info = subprocess.check_output(
+                ["ffprobe", "-v", "error", "-show_entries",
+                 "format=format_name,duration,size:stream=codec_type,codec_name,profile,pix_fmt,level,width,height,codec_tag_string",
+                 "-of", "json", str(render_path)], text=True)
+            sample = ctx.request.get(url + f'/media/{job}/{clip}/preview',
+                                     headers={'Range': 'bytes=0-63'})
+            print("Media probe:", info.strip(), flush=True)
+            print("Media HTTP:", {"status": sample.status,
+                                  "type": sample.headers.get("content-type"),
+                                  "length": sample.headers.get("content-length"),
+                                  "range": sample.headers.get("content-range"),
+                                  "sample_matches_file": sample.body() == render_path.read_bytes()[:64]}, flush=True)
+            print("Browser codecs:", page.locator('#video').evaluate('''video => ({
+                mp4: video.canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"'),
+                webm: video.canPlayType('video/webm; codecs="vp8, vorbis"')
+            })'''), flush=True)
             seek_preview(page, 2.2)
             page.evaluate('window.scrollTo(0, 0)')
             page.screenshot(path=str(args.screenshots/'studio-desktop.png'))
