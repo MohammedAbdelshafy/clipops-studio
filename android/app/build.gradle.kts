@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.chaquo.python")
 }
 
 android {
@@ -11,8 +12,9 @@ android {
         applicationId = "com.mbm.clipops.pocket"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        ndk { abiFilters += listOf("arm64-v8a") }
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     buildTypes {
@@ -37,4 +39,11 @@ dependencies {
     implementation("androidx.media3:media3-transformer:$media3Version")
     implementation("androidx.media3:media3-effect:$media3Version")
     testImplementation("junit:junit:4.13.2")
+}
+
+chaquopy {
+    defaultConfig {
+        version = "3.11"
+        buildPython("python3.11")
+    }
 }
