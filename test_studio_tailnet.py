@@ -48,6 +48,7 @@ class RemotePairingTests(unittest.TestCase):
     def test_anonymous_remote_has_no_session_and_code_is_one_use(self):
         with TemporaryDirectory() as tmp:
             engine = Mock()
+            engine.list_projects.return_value = []
             project = 'b'*32
             engine.get_project.return_value = {'id': project, 'source': {'duration': 5},
                                                 'candidates': [], 'segments': []}
