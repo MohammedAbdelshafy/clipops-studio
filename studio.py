@@ -15,6 +15,8 @@ import shutil
 import socket
 import tempfile
 import threading
+import time
+from urllib.parse import parse_qs
 from urllib.parse import urlsplit
 
 from studio_uploads import UploadStore, UploadError, TUS, EMPTY_RECEIPT, expires, checksum
@@ -22,7 +24,7 @@ from free_fallbacks import free_routes
 import clipops_creative_review as creative_review
 import clipops_scene_review
 import studio_delivery
-from studio_preview import cloud_shell_origin
+from studio_preview import cloud_shell_origin, tailnet_origin
 
 ASSETS = Path(__file__).resolve().parent / 'studio'
 STATIC = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
@@ -69,7 +71,7 @@ def project_view(project, detail):
 class DeskServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port, root, engine, model=None, source_dir=None, cloud_shell=False, web_host=None):
+    def __init__(self, port, root, engine, model=None, source_dir=None, cloud_shell=False, web_host=None, private_origin=None):
         self.root = Path(root).expanduser().resolve()
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.engine = engine
@@ -97,6 +99,23 @@ class DeskServer(ThreadingHTTPServer):
         self.preview_host = urlsplit(self.preview_origin).netloc if self.preview_origin else None
         if self.preview_host:
             self.hosts.add(self.preview_host)
+        if cloud_shell and private_origin:
+            self.server_close()
+            raise ValueError('Choose Cloud Shell or private tailnet, not both')
+        try:
+            self.tailnet_origin = tailnet_origin(private_origin) if private_origin else None
+        except ValueError:
+            self.server_close()
+            raise
+        self.tailnet_host = urlsplit(self.tailnet_origin).netloc if self.tailnet_origin else None
+        if self.tailnet_host:
+            self.hosts.add(self.tailnet_host)
+        # Public routes do NOT receive a Studio session when tailnet mode is on.
+        # Each remote device must present the one-time code printed locally.
+        self.pair_code = secrets.token_hex(8) if self.tailnet_origin else None
+        self.pair_expires = time.monotonic() + 900 if self.pair_code else 0
+        self.pair_attempts = 0
+        self.pair_lock = threading.Lock()
         self.cookie_name = f'clipops_{self.server_port}'
 
     def queue_job(self, project_id, count, clip_ids=None, proxy=False):
@@ -176,6 +195,65 @@ class DeskHandler(BaseHTTPRequestHandler):
         if self.command != 'HEAD':
             self.wfile.write(body)
 
+    def _has_session(self):
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get('Cookie', ''))
+        except CookieError:
+            return False
+        token = cookie.get(self.server.cookie_name)
+        return bool(token and secrets.compare_digest(token.value, self.server.session))
+
+    def _remote_pair(self):
+        """One-use server-console code over private HTTPS or local loopback.
+
+        Never grant anonymous browser sessions on the tailnet origin.
+        """
+        server = self.server
+        if not server.tailnet_origin:
+            raise RequestError(404, 'Private pairing is not configured.')
+        hosts = self.headers.get_all('Host', [])
+        if len(hosts) != 1 or hosts[0] not in server.hosts:
+            raise RequestError(403, 'Unknown private ClipOps host.')
+        if self.headers.get('Sec-Fetch-Site') == 'cross-site':
+            raise RequestError(403, 'Cross-site pairing is forbidden.')
+        origin = self.headers.get('Origin')
+        if origin and origin not in (server.tailnet_origin, 'http://' + hosts[0]):
+            raise RequestError(403, 'Pair only from the configured private Studio origin.')
+        media_type = self.headers.get_content_type()
+        if media_type == 'application/json':
+            value = self._read_json()
+            if sorted(value.keys()) != ['code']:
+                raise RequestError(400, 'Provide only the pairing code.')
+            code = value['code']
+            form = False
+        elif media_type == 'application/x-www-form-urlencoded':
+            data = self.rfile.read(self._length(128)).decode('ascii', 'replace')
+            fields = parse_qs(data, keep_blank_values=True)
+            if sorted(fields.keys()) != ['code'] or len(fields['code']) != 1:
+                raise RequestError(400, 'Enter the pairing code.')
+            code = fields['code'][0]
+            form = True
+        else:
+            raise RequestError(415, 'Pair using JSON or the local pairing form.')
+        if not isinstance(code, str) or len(code) > 64:
+            raise RequestError(400, 'Invalid pairing code.')
+        with server.pair_lock:
+            if server.pair_attempts >= 8 or server.pair_code is None or time.monotonic() > server.pair_expires:
+                raise RequestError(429, 'Pairing unavailable. Restart local ClipOps to create a new code.')
+            if not secrets.compare_digest(code, server.pair_code):
+                server.pair_attempts += 1
+                raise RequestError(403, 'Incorrect pairing code.')
+            server.pair_code = None  # A captured code cannot be replayed.
+        secure = hosts[0] == server.tailnet_host
+        cookie = f'{server.cookie_name}={server.session}; HttpOnly; SameSite=Strict; Path=/' + ('; Secure' if secure else '')
+        headers = [('Set-Cookie', cookie)]
+        if form:
+            headers.append(('Location', '/'))
+            self._headers(303, 'text/plain', 0, headers)
+        else:
+            self._headers(204, 'text/plain', 0, headers)
+
     def _validate_request(self, path):
         hosts = self.headers.get_all('Host', [])
         if len(hosts) != 1 or hosts[0] not in self.server.hosts:
@@ -224,9 +302,15 @@ class DeskHandler(BaseHTTPRequestHandler):
 
     def _get(self, path):
         if path in STATIC:
+            if path == '/' and self.server.tailnet_origin and not self._has_session():
+                content = ("""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pair ClipOps Studio</title><style>body{font:16px system-ui;background:#0c1520;color:#f3f8fa;max-width:32rem;margin:10vh auto;padding:2rem}input,button{font:inherit;padding:0.8rem;width:100%;box-sizing:border-box;margin:0.7rem 0}button{background:#b8f76f;color:#0c1520;border:0;border-radius:0.6rem}input{background:#172739;color:white;border:1px solid #496078}</style></head><body><h1>ClipOps Studio — Private Pairing</h1><p>Enter the one-time code displayed in your laptop or private cloud server terminal. Never share the code publicly.</p><form method="post" action="/api/remote-pair"><label for="code">Pairing code</label><input id="code" type="password" name="code" autocomplete="one-time-code" required minlength="16" maxlength="16"><button type="submit">Pair this browser</button></form></body></html>""").encode('utf-8')
+                self._headers(200, 'text/html; charset=utf-8', len(content))
+                if self.command != 'HEAD':
+                    self.wfile.write(content)
+                return
             filename, mime = STATIC[path]
             content = (ASSETS / filename).read_bytes()
-            extra = [('Set-Cookie', f'{self.server.cookie_name}={self.server.session}; HttpOnly; SameSite=Strict; Path=/' + ('; Secure' if self.server.preview_origin else ''))] if path == '/' else []
+            extra = [('Set-Cookie', f'{self.server.cookie_name}={self.server.session}; HttpOnly; SameSite=Strict; Path=/' + ('; Secure' if self.server.preview_origin else ''))] if path == '/' and not self.server.tailnet_origin else []
             self._headers(200, mime, len(content), extra)
             if self.command != 'HEAD':
                 self.wfile.write(content)
@@ -550,6 +634,9 @@ class DeskHandler(BaseHTTPRequestHandler):
     def _handle(self):
         try:
             path = urlsplit(self.path).path
+            if path == '/api/remote-pair' and self.command == 'POST':
+                self._remote_pair()
+                return
             self._validate_request(path)
             if path == '/api/uploads' or path.startswith('/api/uploads/'):
                 self._upload_route(path)
@@ -587,13 +674,18 @@ def main():
     parser.add_argument('--open', action='store_true', help='Open the local studio in the default browser')
     parser.add_argument('--model', type=Path, help='Optional local faster-whisper model directory')
     parser.add_argument('--cloud-shell', action='store_true', help='Allow exact account-gated Google Cloud Shell HTTPS preview')
+    parser.add_argument('--private-origin', help='Only exact HTTPS *.ts.net private tailnet Serve host; requires one-time device pairing')
     args = parser.parse_args()
     import pilot
     os.umask(0o077)
-    with DeskServer(args.port, args.root, pilot, model=args.model, source_dir=args.source_dir, cloud_shell=args.cloud_shell) as server:
+    with DeskServer(args.port, args.root, pilot, model=args.model, source_dir=args.source_dir, cloud_shell=args.cloud_shell, private_origin=args.private_origin) as server:
         print(f'ClipOps Studio is ready at http://127.0.0.1:{server.server_port}', flush=True)
         if server.preview_origin:
             print(f'Android preview (Google sign-in required): {server.preview_origin}', flush=True)
+        if server.tailnet_origin:
+            print(f'Private Android Studio: {server.tailnet_origin}', flush=True)
+            print(f'One-time private pairing code (valid 15 minutes): {server.pair_code}', flush=True)
+            print('Accessible only with independently configured private Tailscale Serve; never enable Funnel.', flush=True)
         if args.open:
             import webbrowser
             opener = threading.Thread(target=webbrowser.open, args=(f'http://127.0.0.1:{server.server_port}',), daemon=True)
