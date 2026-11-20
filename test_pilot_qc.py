@@ -1,4 +1,5 @@
 """Pilot media QC, digest-bound approvals, and pre-network rejection."""
+from contextlib import closing
 import hashlib
 from pathlib import Path
 import shutil
@@ -173,11 +174,12 @@ class ApprovalIntegrityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             db = str(Path(tmp) / "old.sqlite3")
             old_schema = clipops.SCHEMA.replace(", approved_sha256 TEXT", "")
-            with sqlite3.connect(db) as con:
+            with closing(sqlite3.connect(db)) as con:
                 con.execute(old_schema)
                 con.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                             ("previous", "old.mp4", "youtube", "fake", "title", "caption",
                              "2099-01-01T00:00:00Z", "approved", 1, None, "2026-11-19T00:00:00Z"))
+                con.commit()
             row = clipops.list_jobs(db)[0]
             self.assertEqual(row["status"], "draft")
             self.assertEqual(row["rights_confirmed"], 0)

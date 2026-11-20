@@ -14,6 +14,8 @@ import tempfile
 import unicodedata
 import wave
 
+from clipops_compat import replace_file, serialised
+
 
 # These are transcript signals that an editor can inspect. Scores are editorial
 # sort keys. They are deliberately independent of views or channel analytics.
@@ -303,19 +305,20 @@ def _fingerprint(path):
 
 def _atomic_json(path, value):
     # Unique temp names let simultaneous workers converge on complete files.
-    with tempfile.NamedTemporaryFile('w', encoding='utf-8', dir=path.parent, delete=False) as f:
-        staging = Path(f.name)
+    with serialised(path):
+        with tempfile.NamedTemporaryFile('w', encoding='utf-8', dir=path.parent, delete=False) as f:
+            staging = Path(f.name)
+            try:
+                json.dump(value, f, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+                f.flush()
+                os.fsync(f.fileno())
+            except BaseException:
+                staging.unlink(missing_ok=True)
+                raise
         try:
-            json.dump(value, f, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
-            f.flush()
-            os.fsync(f.fileno())
-        except BaseException:
+            replace_file(staging, path)
+        finally:
             staging.unlink(missing_ok=True)
-            raise
-    try:
-        os.replace(staging, path)
-    finally:
-        staging.unlink(missing_ok=True)
 
 
 def _audio(src, index, start, end, output, pcm=False):

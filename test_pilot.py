@@ -1,13 +1,15 @@
 """Regression coverage for private project state, interrupted renders and signed-off delivery."""
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
-from threading import Event
+from threading import Event, Thread
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
 import pilot
+from clipops_compat import is_private_path
 
 
 class PilotTests(unittest.TestCase):
@@ -54,7 +56,10 @@ class PilotTests(unittest.TestCase):
             pilot.get_project(self.root, "../elsewhere")
         project = self.create()
         self.assertEqual(pilot.list_projects(self.root)[0]["id"], project)
-        self.assertEqual(self.root.stat().st_mode & 0o777, 0o700)
+        if os.name == "nt":
+            self.assertTrue(is_private_path(self.root, directory=True))
+        else:
+            self.assertEqual(self.root.stat().st_mode & 0o777, 0o700)
         self.assertNotIn("model_path", pilot.get_project(self.root, project))
 
     def test_webm_preview_is_cached_private_and_does_not_approve_delivery(self):
@@ -69,7 +74,11 @@ class PilotTests(unittest.TestCase):
         with patch.object(pilot.subprocess, "run", side_effect=fake_encode) as run:
             path = pilot.browser_preview(self.root, job, "c01")
             self.assertEqual(path.read_bytes(), b"local-private-webm-test")
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            # Windows has no mode bits: assert the effective ACL instead.
+            if os.name == "nt":
+                self.assertTrue(is_private_path(path))
+            else:
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(path.name, "preview.webm")
             self.assertEqual(pilot.browser_preview(self.root, job, "c01"), path)
             self.assertEqual(run.call_count, 1)
@@ -143,6 +152,38 @@ class PilotTests(unittest.TestCase):
         self.assertTrue(all(c["rendered"] for c in state["candidates"]))
         pilot.purge_project(self.root, job)
         self.assertEqual(pilot.list_projects(self.root), [])
+
+    def test_concurrent_reader_does_not_break_atomic_state_save(self):
+        """A reader must not make the atomic state replace fail on Windows.
+
+        Windows denies the rename while a handle to the target is open without
+        delete sharing, so Studio's render worker and its HTTP reader collide.
+        """
+        target = self.work / "project.json"
+        pilot.save_json(target, {"status": "processing", "n": 0})
+        stop = Event()
+        failures = []
+
+        def reader():
+            while not stop.is_set():
+                try:
+                    pilot.load_json(target)
+                except Exception as exc:  # pragma: no cover - diagnostic
+                    failures.append(f"{type(exc).__name__}: {exc}")
+                    return
+
+        workers = [Thread(target=reader, daemon=True) for _ in range(4)]
+        for worker in workers:
+            worker.start()
+        try:
+            for n in range(40):
+                pilot.save_json(target, {"status": "processing", "n": n})
+        finally:
+            stop.set()
+            for worker in workers:
+                worker.join(timeout=5)
+        self.assertEqual(failures, [])
+        self.assertEqual(pilot.load_json(target)["n"], 39)
 
 
 if __name__ == "__main__":

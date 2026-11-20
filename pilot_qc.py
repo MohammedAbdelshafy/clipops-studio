@@ -8,8 +8,8 @@ from fractions import Fraction
 import os
 from pathlib import Path
 import re
-import selectors
 import subprocess
+import threading
 import time
 import unicodedata
 
@@ -46,29 +46,42 @@ def _run(command, timeout):
         raise RuntimeError(f"{command[0]} must be installed locally") from exc
     deadline = time.monotonic() + timeout
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
-    with proc, selectors.DefaultSelector() as selector:
-        selector.register(proc.stdout, selectors.EVENT_READ, "stdout")
-        selector.register(proc.stderr, selectors.EVENT_READ, "stderr")
+    errors = []
+
+    def drain(name):
         try:
-            while selector.get_map():
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise ValueError(f"{command[0]} exceeded its inspection deadline")
-                for key, _ in selector.select(remaining):
-                    chunk = os.read(key.fd, 65536)
-                    if not chunk:
-                        selector.unregister(key.fd)
-                        continue
-                    output = buffers[key.data]
-                    if len(output) + len(chunk) > 2 * 1024**2:
-                        raise ValueError("Media diagnostics exceeded the local inspection limit")
-                    output.extend(chunk)
-            code = proc.wait(timeout=max(.01, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired as exc:
-            raise ValueError(f"{command[0]} exceeded its inspection deadline") from exc
-        finally:
-            if proc.poll() is None:
-                proc.kill()
+            stream = proc.stdout if name == "stdout" else proc.stderr
+            while True:
+                chunk = os.read(stream.fileno(), 65536)
+                if not chunk:
+                    break
+                output = buffers[name]
+                if len(output) + len(chunk) > 2 * 1024**2:
+                    raise ValueError("Media diagnostics exceeded the local inspection limit")
+                output.extend(chunk)
+        except BaseException as exc:
+            errors.append(exc)
+
+    # select() only accepts sockets on Windows; threads drain pipes on every OS.
+    readers = [threading.Thread(target=drain, args=(name,), daemon=True)
+               for name in ("stdout", "stderr")]
+    for reader in readers:
+        reader.start()
+    try:
+        code = proc.wait(timeout=max(.01, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(f"{command[0]} exceeded its inspection deadline") from exc
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    for reader in readers:
+        reader.join(timeout=max(.01, deadline - time.monotonic()))
+    if proc.stdout:
+        proc.stdout.close()
+    if proc.stderr:
+        proc.stderr.close()
+    if errors:
+        raise errors[0]
     return subprocess.CompletedProcess(command, code, *(buffers[k].decode("utf-8", "replace")
                                                          for k in ("stdout", "stderr")))
 

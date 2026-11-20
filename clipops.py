@@ -206,8 +206,15 @@ def promo(brief_path: str, output: str, width: int = 720, height: int = 1280) ->
         raise ValueError("Dimensions must be positive even numbers")
     out = Path(output).expanduser().resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
-    font = config.get("font") or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    font = require_local_file(font, (".ttf", ".otf", ".ttc"))
+    chosen_font = config.get("font")
+    if not chosen_font:
+        for candidate in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                          "C:/Windows/Fonts/arialbd.ttf",
+                          "C:/Windows/Fonts/segoeuib.ttf"):
+            if Path(candidate).is_file():
+                chosen_font = candidate
+                break
+    font = require_local_file(chosen_font, (".ttf", ".otf", ".ttc"))
     color = config.get("background", "#172033")
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
         raise ValueError("background must be #RRGGBB")
