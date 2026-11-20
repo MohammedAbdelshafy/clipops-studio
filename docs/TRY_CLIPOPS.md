@@ -76,3 +76,14 @@ The editor binds to `127.0.0.1` and is intended for one trusted operating-system
 - [ ] Download MP4, SRT and VTT; verify all remain correct after replay
 
 The project is ready for **supervised local evaluation** when the merged build passes CI and the user completes this checklist. It is not certified for unattended public ingest or publishing.
+
+
+### Browser codec notes
+
+The desktop/mobile editor tests also qualify a browser without MP4 codecs:
+ClipOps transparently generates a local 540p VP8/Opus WebM **rendered preview**
+only, while keeping the high-quality MP4 for human-approved downloads.
+The proxy is cached inside the private project render bundle and is removed
+when the render is invalidated. For long source video playback, choose a
+desktop browser with working H.264 support; the proxy builder for original
+source footage is a separate, explicitly requested local process.
