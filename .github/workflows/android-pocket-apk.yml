@@ -49,8 +49,9 @@ jobs:
           ! grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml
           grep -q 'android:usesCleartextTraffic="false"' android/app/src/main/AndroidManifest.xml
           grep -q 'versionCode = 2' android/app/build.gradle.kts
+          grep -q 'applicationId = "com.mbm.clipops.studio"' android/app/build.gradle.kts
           grep -q 'Tailscale-User-Login' studio.py
-          grep -q 'owner-gated' docs/HYBRID_ANDROID_STUDIO.md || true
+          test -s docs/HYBRID_ANDROID_STUDIO.md
           ! grep -q 'android.permission.READ_EXTERNAL_STORAGE' android/app/src/main/AndroidManifest.xml
           test -s android/app/build/outputs/apk/debug/app-debug.apk
           unzip -t android/app/build/outputs/apk/debug/app-debug.apk | tail -n 1
