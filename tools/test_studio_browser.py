@@ -251,9 +251,15 @@ def main():
                     worker_active = job in server.active
                 statuses = page.get_by_role('status').all_text_contents()
                 monitor = page.locator('.monitor-head').inner_text()
+                project_state = server.details(job)
+                candidates = [(c['id'], c.get('rendered'), c.get('render_error'))
+                              for c in project_state.get('candidates', [])[:3]]
                 raise AssertionError(
                     f'Edit render unavailable: project={job!r}, active={worker_active}, '
                     f'worker_error={worker_error!r}, monitor={monitor!r}, '
+                    f'project_status={project_state.get("status")!r}, '
+                    f'project_error={project_state.get("error")!r}, '
+                    f'candidates={candidates!r}, '
                     f'ui_statuses={statuses[-4:]!r}, page_errors={errors[-4:]!r}'
                 ) from exc
             motion = page.get_by_role('button', name='Toggle cinematic video backdrop')
