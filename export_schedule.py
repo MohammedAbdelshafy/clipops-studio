@@ -5,6 +5,8 @@ No network requests. Never marks a job submitted or changes database rows.
 CSV output is an operational checklist, not an auto-publishing queue.
 """
 from __future__ import annotations
+
+from contextlib import closing
 import argparse
 import csv
 from datetime import datetime
@@ -26,7 +28,7 @@ def export_schedule(db: str, out: str, tz: str = "Africa/Cairo") -> dict:
     zone = ZoneInfo(tz)
     path = Path(db).expanduser().resolve(strict=True)
     output = Path(out).expanduser().resolve()
-    with sqlite3.connect(path) as con:
+    with closing(sqlite3.connect(path)) as con:
         con.row_factory = sqlite3.Row
         jobs = list(con.execute("""SELECT id,platform,scheduled_utc,title,caption,file,rights_confirmed,status
                                  FROM jobs WHERE status='approved' AND rights_confirmed=1

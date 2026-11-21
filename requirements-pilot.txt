@@ -1,2 +1,5 @@
 # Pillow measures caption width with the same locally installed fonts used by libass.
 Pillow==13.0.0
+# Google Drive folder import uses requests as an optional runtime dependency;
+# its offline tests instantiate the reader and need it installed in CI.
+requests>=2.32,<3

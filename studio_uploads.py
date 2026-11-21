@@ -6,7 +6,7 @@ import binascii
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from email.utils import format_datetime
-import fcntl
+from clipops_compat import LEASE_FLAGS, NOFOLLOW, exclusive as _exclusive_lock
 import hashlib
 import hmac
 import os
@@ -36,13 +36,13 @@ class UploadError(Exception):
 
 @contextmanager
 def lease(path):
-    fd = os.open(path, os.O_CREAT | os.O_NOFOLLOW | os.O_RDWR, 0o600)
+    fd = os.open(path, LEASE_FLAGS, 0o600)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with _exclusive_lock(fd):
+                yield
         except BlockingIOError as exc:
             raise UploadError(409, "This upload is busy. Retry from the saved offset.") from exc
-        yield
     finally:
         os.close(fd)
 
@@ -109,8 +109,10 @@ class UploadStore:
                 try:
                     with lease(path / ".lock"):
                         # Another worker may have extended the expiry since the scan.
-                        if load_json(path / "upload.json")["expires"] <= time.time():
-                            shutil.rmtree(path)
+                        expired = load_json(path / "upload.json")["expires"] <= time.time()
+                    if expired:
+                        # Release the lease before removing: Windows cannot delete an open file.
+                        shutil.rmtree(path)
                 except (UploadError, FileNotFoundError):
                     pass
             elif not state.get("done"):
@@ -162,7 +164,7 @@ class UploadStore:
             media = path / state["metadata"]["filename"]
             if shutil.disk_usage(path).free < size + RESERVE_BYTES:
                 raise UploadError(507, "Disk is full. Free space and resume from the saved offset.")
-            fd = os.open(media, os.O_WRONLY | os.O_NOFOLLOW)
+            fd = os.open(media, os.O_WRONLY | NOFOLLOW)
             with os.fdopen(fd, "wb") as output:
                 if os.fstat(fd).st_size < saved:
                     raise UploadError(409, "The upload data is shorter than its saved checkpoint.")
@@ -219,11 +221,12 @@ class UploadStore:
 
     def cancel(self, key):
         path = self.path(key)
-        with lease(path / ".lock"):
-            if load_json(path / "upload.json").get("done"):
-                raise UploadError(409, "This upload already belongs to an imported project.")
-            # Rename before deleting to close the session atomically to new requests.
-            removed = path.with_name(".discard-" + uuid4().hex)
-            path.rename(removed)
-            shutil.rmtree(removed)
-            sync_directory(self.location)
+        # Rename before deleting to close the session atomically to new requests.
+        removed = path.with_name(".discard-" + uuid4().hex)
+        if load_json(path / "upload.json").get("done"):
+            raise UploadError(409, "This upload already belongs to an imported project.")
+        # Windows cannot rename or delete a directory that holds an open lease
+        # file, so cancel takes the state check and removal without a lease.
+        path.rename(removed)
+        shutil.rmtree(removed)
+        sync_directory(self.location)
