@@ -240,7 +240,22 @@ def main():
             page.get_by_role('button',name='Render batch').click()
             page.get_by_role('button',name='Render selected clips').click()
             expect(page.locator('#dialog')).not_to_be_visible()
-            expect(page.locator('.monitor-head')).to_contain_text('Rendered preview',timeout=150000)
+            try:
+                expect(page.locator('.monitor-head')).to_contain_text('Rendered preview', timeout=150000)
+            except AssertionError as exc:
+                # Preserve the actual async render failure in CI logs. The
+                # preview header alone says nothing about why it remained on
+                # the original footage for the duration of this smoke test.
+                with server.lock:
+                    worker_error = server.worker_errors.get(job)
+                    worker_active = job in server.active
+                statuses = page.get_by_role('status').all_text_contents()
+                monitor = page.locator('.monitor-head').inner_text()
+                raise AssertionError(
+                    f'Edit render unavailable: project={job!r}, active={worker_active}, '
+                    f'worker_error={worker_error!r}, monitor={monitor!r}, '
+                    f'ui_statuses={statuses[-4:]!r}, page_errors={errors[-4:]!r}'
+                ) from exc
             motion = page.get_by_role('button', name='Toggle cinematic video backdrop')
             expect(motion).to_have_attribute('aria-pressed', 'true')
             expect(page.locator('.ambient-preview')).to_have_count(1)
