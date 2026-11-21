@@ -37,7 +37,7 @@ class CompatStateTests(unittest.TestCase):
             return real_open(path, *args, **kwargs)
 
         with patch("builtins.open", side_effect=flaky_open):
-            with compat.shared_read(target, delay=0) as stream:
+            with compat.shared_read(target, attempts=3, delay=0) as stream:
                 self.assertEqual(json.load(stream), {"ok": True})
         self.assertEqual(len(calls), 3)
 
