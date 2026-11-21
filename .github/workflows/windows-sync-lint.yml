@@ -1,0 +1,34 @@
+name: ClipOps Windows checkout-sync syntax
+
+on:
+  pull_request:
+    paths:
+      - tools/Update-ClipOpsCheckout.ps1
+      - docs/DESKTOP_GITHUB_SYNC.md
+      - .github/workflows/windows-sync-lint.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  powershell-parse:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse updater without running or modifying a machine
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          $file = Join-Path $env:GITHUB_WORKSPACE 'tools/Update-ClipOpsCheckout.ps1'
+          $null = [System.Management.Automation.Language.Parser]::ParseFile(
+            $file, [ref]$tokens, [ref]$parseErrors)
+          if ($parseErrors.Count -gt 0) {
+            foreach ($error in $parseErrors) {
+              Write-Host "PowerShell parse error: $error"
+            }
+            exit 1
+          }
+          Write-Host 'PowerShell updater parsed successfully (not executed).'
