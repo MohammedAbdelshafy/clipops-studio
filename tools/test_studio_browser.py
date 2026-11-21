@@ -245,7 +245,14 @@ def main():
             page.get_by_role('button',name='Save reviewed cuts').click()
             expect(page.get_by_role('status').last).to_have_text('Reviewed cuts saved.')
             page.get_by_role('button',name='Edit punch-ins').click()
-            page.get_by_label('Timed punch-ins').fill('0.80, 1.20, 1.08')
+            # A punch-in must lie wholly inside one kept interval, including
+            # after the deliberately removed silence; derive it from that edit.
+            retained = [(.33, cut_start), (cut_end, 8.0)]
+            left, right = max(retained, key=lambda interval: interval[1] - interval[0])
+            punch_start = round(left + .08, 3)
+            punch_end = round(punch_start + .50, 3)
+            assert punch_end < right - .03, 'Synthetic fixture needs a retained punch-in interval'
+            page.get_by_label('Timed punch-ins').fill(f'{punch_start:.3f}, {punch_end:.3f}, 1.08')
             page.get_by_role('button',name='Save punch-ins').click()
             expect(page.get_by_role('status').last).to_have_text('Punch-ins saved.')
             page.get_by_role('button',name='Render batch').click()
