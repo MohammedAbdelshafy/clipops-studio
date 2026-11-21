@@ -230,11 +230,22 @@ def main():
             detail.get_by_role('button',name='Save clip edits').click()
             expect(page.get_by_role('status').last).to_have_text('Clip edits saved.')
             page.get_by_role('button',name='Review pause and filler cuts').click()
-            page.get_by_label('Reviewed source intervals').fill('4.70, 5.10')
+            # Synthetic captions have cue timings, not per-word timings. A cut
+            # inside speech is correctly forbidden, so select a measured silence
+            # between two source cues rather than defeating the speech guard.
+            source_cues = metadata['transcript']['segments']
+            gaps = [(a['end'], b['start']) for a, b in zip(source_cues, source_cues[1:])
+                    if a['end'] >= .33 and b['start'] <= 8.0
+                    and b['start'] - a['end'] >= .30]
+            assert gaps, 'Synthetic test needs a genuine source pause within the selected clip'
+            pause_start, pause_end = gaps[0]
+            cut_start, cut_end = round(pause_start + .06, 3), round(pause_start + .24, 3)
+            assert cut_end < pause_end - .025, 'Cut must stay in confirmed silence'
+            page.get_by_label('Reviewed source intervals').fill(f'{cut_start:.3f}, {cut_end:.3f}')
             page.get_by_role('button',name='Save reviewed cuts').click()
             expect(page.get_by_role('status').last).to_have_text('Reviewed cuts saved.')
             page.get_by_role('button',name='Edit punch-ins').click()
-            page.get_by_label('Timed punch-ins').fill('1.20, 2.40, 1.08')
+            page.get_by_label('Timed punch-ins').fill('0.80, 1.20, 1.08')
             page.get_by_role('button',name='Save punch-ins').click()
             expect(page.get_by_role('status').last).to_have_text('Punch-ins saved.')
             page.get_by_role('button',name='Render batch').click()
@@ -270,7 +281,8 @@ def main():
             expect(page.locator('.ambient-preview')).to_have_count(0)
             motion.click()
             expect(page.locator('.ambient-preview')).to_have_count(1)
-            assert abs(float(page.locator('#scrub').get_attribute('max')) - 7.27) < .06
+            edited_length = 8.0 - .33 - (cut_end - cut_start)
+            assert abs(float(page.locator('#scrub').get_attribute('max')) - edited_length) < .06
             page.get_by_role('button',name='View source').click()
             expect(page.locator('.monitor-head')).to_contain_text('Source preview')
             expect(page.locator('.ambient-preview')).to_have_count(0)
